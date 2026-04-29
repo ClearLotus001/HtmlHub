@@ -1,0 +1,377 @@
+﻿@import url('https://fonts.googleapis.com/css2?family=SF+Pro+Display:wght@300;400;500;600;700&family=SF+Pro+Text:wght@400;500;600;700&display=swap');
+@import "tailwindcss";
+
+/* Tailwind v4 暗黑模式配置 */
+@custom-variant dark (&:is(.dark *));
+
+
+@theme {
+  /* macOS 玻璃态配色方案 */
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  /* macOS 温暖背景色调 */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+
+  /* 主色调：macOS 蓝 */
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+
+  /* 次要色调：精致的灰 */
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+
+  /* 强调色：透明的蓝 */
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+
+  /* 静音色调 */
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+
+  /* 危险色：macOS 红 */
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+
+  /* 卡片色调 - 玻璃态 */
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+
+  /* 弹层与状态语义色 */
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+
+  /* 圆角系统 - macOS 风格 */
+  --radius-lg: 1.25rem;
+  --radius-md: 0.875rem;
+  --radius-sm: 0.625rem;
+  --radius-xl: 1.5rem;
+  --radius-2xl: 2rem;
+}
+
+:root {
+  --border: hsl(220 13% 91% / 0.8);
+  --input: hsl(220 13% 91% / 0.9);
+  --ring: hsl(217 91% 60% / 0.8);
+  --background: hsl(240 20% 99%);
+  --foreground: hsl(240 10% 3.9%);
+  --primary: hsl(217 91% 60%);
+  --primary-foreground: hsl(0 0% 100%);
+  --secondary: hsl(240 4.8% 95.9% / 0.8);
+  --secondary-foreground: hsl(240 5.9% 10%);
+  --accent: hsl(217 91% 60% / 0.08);
+  --accent-foreground: hsl(240 5.9% 10%);
+  --muted: hsl(240 4.8% 95.9% / 0.6);
+  --muted-foreground: hsl(240 3.8% 46.1%);
+  --destructive: hsl(0 84.2% 60.2%);
+  --destructive-foreground: hsl(0 0% 98%);
+  --card: hsl(0 0% 100% / 0.72);
+  --card-foreground: hsl(240 10% 3.9%);
+  --popover: hsl(0 0% 100% / 0.94);
+  --popover-foreground: hsl(240 10% 3.9%);
+  --success: hsl(142 71% 45%);
+  --success-foreground: hsl(0 0% 100%);
+  --warning: hsl(38 92% 50%);
+  --warning-foreground: hsl(240 10% 3.9%);
+  --info: hsl(217 91% 60%);
+  --info-foreground: hsl(0 0% 100%);
+  --glass-bg: hsl(0 0% 100% / 0.72);
+  --glass-bg-hover: hsl(0 0% 100% / 0.88);
+  --glass-border: hsl(240 5.9% 90% / 0.8);
+  --glass-shadow: 0 8px 32px -8px hsl(240 5.9% 10% / 0.1);
+  --glass-shadow-hover: 0 16px 48px -12px hsl(240 5.9% 10% / 0.15);
+  --glass-blur: blur(20px);
+  color-scheme: light;
+}
+
+.dark {
+  --border: hsl(240 5% 28% / 0.64);
+  --input: hsl(240 5% 28% / 0.72);
+  --ring: hsl(217 91% 70% / 0.82);
+  --background: hsl(240 10% 7%);
+  --foreground: hsl(0 0% 96%);
+  --primary: hsl(217 91% 70%);
+  --primary-foreground: hsl(240 10% 7%);
+  --secondary: hsl(240 8% 16% / 0.82);
+  --secondary-foreground: hsl(0 0% 96%);
+  --accent: hsl(217 91% 70% / 0.16);
+  --accent-foreground: hsl(217 91% 88%);
+  --muted: hsl(240 8% 16% / 0.72);
+  --muted-foreground: hsl(240 8% 72%);
+  --destructive: hsl(0 72% 64%);
+  --destructive-foreground: hsl(0 0% 100%);
+  --card: hsl(240 10% 15% / 0.78);
+  --card-foreground: hsl(0 0% 96%);
+  --popover: hsl(240 10% 14% / 0.95);
+  --popover-foreground: hsl(0 0% 96%);
+  --success: hsl(142 70% 56%);
+  --success-foreground: hsl(240 10% 7%);
+  --warning: hsl(38 92% 58%);
+  --warning-foreground: hsl(240 10% 7%);
+  --info: hsl(217 91% 70%);
+  --info-foreground: hsl(240 10% 7%);
+  --glass-bg: hsl(240 10% 15% / 0.78);
+  --glass-bg-hover: hsl(240 10% 18% / 0.9);
+  --glass-border: hsl(240 5% 30% / 0.55);
+  --glass-shadow: 0 8px 32px -8px hsl(0 0% 0% / 0.32);
+  --glass-shadow-hover: 0 16px 48px -12px hsl(0 0% 0% / 0.5);
+  color-scheme: dark;
+}
+
+@layer base {
+  :where(.bg-background, .text-foreground, .bg-card, .text-card-foreground, .border-border) {
+    transition-property: color, background-color, border-color, box-shadow;
+    transition-duration: 200ms;
+    transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  html {
+    scroll-behavior: smooth;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI',
+      'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  *:focus-visible {
+    outline: 2px solid var(--color-ring);
+    outline-offset: 2px;
+    outline-style: solid;
+  }
+
+  button,
+  a,
+  input,
+  select,
+  textarea {
+    transition-property: color, background-color, border-color, box-shadow, opacity, transform;
+    transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+    transition-duration: 200ms;
+  }
+}
+
+/* 自定义滚动条 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--muted-foreground);
+  border-radius: 3px;
+  opacity: 0.65;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--foreground);
+}
+
+/* 平滑渐入动画 */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in-up {
+  animation: fadeInUp 0.4s ease-out forwards;
+}
+
+/* 卡片悬停效果增强 */
+.card-hover-effect {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.card-hover-effect:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--glass-shadow-hover);
+}
+
+.container {
+  margin-inline: auto;
+  width: 100%;
+  max-width: 1440px;
+  padding-inline: 16px;
+}
+
+@media (min-width: 768px) {
+  .container {
+    padding-inline: 24px;
+  }
+}
+
+@media (min-width: 1280px) {
+  .container {
+    padding-inline: 32px;
+  }
+}
+
+/* macOS 玻璃态工具类 */
+.glass {
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+}
+
+.glass-hover:hover {
+  background: var(--glass-bg-hover);
+  box-shadow: var(--glass-shadow-hover);
+}
+
+.glass-card {
+  background: var(--glass-bg);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  border-radius: 1rem;
+}
+
+.glass-card:hover {
+  background: var(--glass-bg-hover);
+  box-shadow: var(--glass-shadow-hover);
+  transform: translateY(-2px);
+}
+
+/* macOS 风格动画 */
+@keyframes macos-fade-in {
+  from {
+    opacity: 0;
+    transform: scale(0.98) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes macos-slide-down {
+  from {
+    opacity: 0;
+    transform: translateY(-12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes macos-slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes macos-scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-macos-fade-in {
+  animation: macos-fade-in 0.4s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+.animate-macos-slide-down {
+  animation: macos-slide-down 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+.animate-macos-slide-up {
+  animation: macos-slide-up 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+.animate-macos-scale-in {
+  animation: macos-scale-in 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+@keyframes slide-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.animate-slide-in-right {
+  animation: slide-in-right 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+/* 卡片网格动画延迟 */
+.card-grid > * {
+  opacity: 0;
+  animation: macos-fade-in 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+.card-grid > *:nth-child(1) { animation-delay: 0.05s; }
+.card-grid > *:nth-child(2) { animation-delay: 0.1s; }
+.card-grid > *:nth-child(3) { animation-delay: 0.15s; }
+.card-grid > *:nth-child(4) { animation-delay: 0.2s; }
+.card-grid > *:nth-child(5) { animation-delay: 0.25s; }
+.card-grid > *:nth-child(6) { animation-delay: 0.3s; }
+.card-grid > *:nth-child(7) { animation-delay: 0.35s; }
+.card-grid > *:nth-child(8) { animation-delay: 0.4s; }
+.card-grid > *:nth-child(9) { animation-delay: 0.45s; }
+.card-grid > *:nth-child(10) { animation-delay: 0.5s; }
+.card-grid > *:nth-child(11) { animation-delay: 0.55s; }
+.card-grid > *:nth-child(12) { animation-delay: 0.6s; }
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  .card-grid > * {
+    opacity: 1;
+    animation: none;
+  }
+}

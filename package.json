@@ -1,0 +1,29 @@
+{
+  "name": "htmlhub",
+  "version": "0.2.0",
+  "private": true,
+  "description": "HTML Static Page Management & Display Platform",
+  "workspaces": [
+    "apps/api",
+    "apps/web"
+  ],
+  "scripts": {
+    "dev:api": "npm run start:dev -w apps/api",
+    "dev:web": "npm run dev -w apps/web",
+    "dev": "node --experimental-strip-types scripts/parallel.ts \"npm run dev:api\" \"npm run dev:web\"",
+    "build:api": "npm run build -w apps/api",
+    "build:web": "npm run build -w apps/web",
+    "build": "npm run build:api && npm run build:web",
+    "typecheck:api": "npm run typecheck -w apps/api",
+    "typecheck:web": "npm run typecheck -w apps/web",
+    "start:api": "npm run start:prod -w apps/api",
+    "start:web": "npm run start -w apps/web",
+    "start": "node --experimental-strip-types scripts/parallel.ts \"npm run start:api\" \"npm run start:web\"",
+    "serve": "npm run build && npm run start",
+    "lint:web": "npm run lint -w apps/web",
+    "lint": "npm run lint:web"
+  },
+  "dependencies": {
+    "@nestjs/swagger": "^11.4.2"
+  }
+}
