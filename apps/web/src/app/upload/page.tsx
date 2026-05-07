@@ -130,11 +130,12 @@ export default function UploadPage() {
     try {
       setCreatingCategory(true);
       const created = await api.createCategory(name);
-      await loadCategories();
       setOverrides((prev) => ({ ...prev, category: created.slug }));
       setCreateDialogOpen(false);
       setNewCategoryName('');
-      addToast({ type: 'success', title: '分类已创建', message: `已切换到“${created.name}”分类。` });
+      addToast({ type: 'success', title: '分类已创建', message: `已切换到"${created.name}"分类。` });
+      // 后台刷新分类列表，不阻塞 UI 反馈
+      loadCategories().catch(() => {/* ignore */});
     } catch (e) {
       const message = e instanceof Error ? e.message : '创建分类失败';
       addToast({ type: 'error', title: '创建失败', message });

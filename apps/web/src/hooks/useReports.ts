@@ -98,55 +98,61 @@ export function useReports(filters: ReportFilters) {
     }
   }, []);
 
+  // 辅助方法：执行操作后在后台刷新列表，不阻塞调用方
+  // 确保 UI 反馈（关闭 dialog、显示 toast）不受列表刷新耗时影响
+  const refreshInBackground = useCallback(() => {
+    fetchList(filters, page).catch(() => {/* ignore */});
+  }, [fetchList, filters, page]);
+
   const createCategory = useCallback(async (name: string): Promise<CategoryDto> => {
     const result = await api.createCategory(name);
-    await fetchList(filters, page);
+    refreshInBackground();
     return result;
-  }, [fetchList, filters, page]);
+  }, [refreshInBackground]);
 
   const updateCategory = useCallback(async (slug: string, name: string): Promise<CategoryDto> => {
     const result = await api.updateCategory(slug, name);
-    await fetchList(filters, page);
+    refreshInBackground();
     return result;
-  }, [fetchList, filters, page]);
+  }, [refreshInBackground]);
 
   const deleteCategory = useCallback(async (slug: string): Promise<void> => {
     const result = await api.deleteCategory(slug);
     if (result.migrated > 0) {
       await alertDialog(`分类已删除，${result.migrated} 个报告已迁移到默认分类。`, { type: 'success', title: '删除成功' });
     }
-    await fetchList(filters, page);
-  }, [fetchList, filters, page]);
+    refreshInBackground();
+  }, [refreshInBackground]);
 
   const updateProject = useCallback(async (category: string, project: string, newProject: string) => {
     const result = await api.updateProject(category, project, newProject);
-    await fetchList(filters, page);
+    refreshInBackground();
     return result;
-  }, [fetchList, filters, page]);
+  }, [refreshInBackground]);
 
   const deleteProject = useCallback(async (category: string, project: string) => {
     const result = await api.deleteProject(category, project);
-    await fetchList(filters, page);
+    refreshInBackground();
     return result;
-  }, [fetchList, filters, page]);
+  }, [refreshInBackground]);
 
   const moveProject = useCallback(async (category: string, project: string, targetCategory: string, targetProject?: string) => {
     const result = await api.moveProject(category, project, targetCategory, targetProject);
-    await fetchList(filters, page);
+    refreshInBackground();
     return result;
-  }, [fetchList, filters, page]);
+  }, [refreshInBackground]);
 
   const moveReport = useCallback(async (id: string, category: string, project: string) => {
     const result = await api.moveReport(id, category, project);
-    await fetchList(filters, page);
+    refreshInBackground();
     return result;
-  }, [fetchList, filters, page]);
+  }, [refreshInBackground]);
 
   const updateReportTitle = useCallback(async (id: string, title: string) => {
     const result = await api.updateReportTitle(id, title);
-    await fetchList(filters, page);
+    refreshInBackground();
     return result;
-  }, [fetchList, filters, page]);
+  }, [refreshInBackground]);
 
   // 筛选条件变化时重置到第 1 页，并清空选择
   useEffect(() => {
@@ -171,12 +177,13 @@ export function useReports(filters: ReportFilters) {
 
     try {
       await api.remove(id);
-      await fetchList(filters, page);
+      refreshInBackground();
+      await alertDialog('报告已成功移入回收站。', { type: 'success', title: '删除成功' });
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : '未知错误';
       await alertDialog(`删除失败：${message}`, { type: 'error', title: '操作失败' });
     }
-  }, [fetchList, filters, page]);
+  }, [refreshInBackground]);
 
   // 批量删除
   const batchDelete = useCallback(async () => {
@@ -192,7 +199,7 @@ export function useReports(filters: ReportFilters) {
     try {
       const result = await api.batchRemove(ids);
       setSelectedIds(new Set());
-      await fetchList(filters, page);
+      refreshInBackground();
       if (result.failed.length > 0) {
         await alertDialog(
           `成功删除 ${result.succeeded} 个，${result.failed.length} 个失败：${result.failed.map((f) => f.id).join(', ')}`,
@@ -205,7 +212,7 @@ export function useReports(filters: ReportFilters) {
       const message = e instanceof Error ? e.message : '未知错误';
       await alertDialog(`批量删除失败：${message}`, { type: 'error', title: '操作失败' });
     }
-  }, [selectedIds, fetchList, filters, page]);
+  }, [selectedIds, refreshInBackground]);
 
   return {
     tree,
