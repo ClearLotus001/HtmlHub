@@ -1,7 +1,7 @@
 ﻿'use client';
 
 import { useMemo } from 'react';
-import { Trash2, X, CheckSquare } from 'lucide-react';
+import { Trash2, X } from 'lucide-react';
 import { ActiveReportFilters } from '@/components/reports/ActiveReportFilters';
 import { ReportCard } from '@/components/reports/ReportCard';
 import { ReportSidebar } from '@/components/reports/ReportSidebar';
@@ -11,31 +11,66 @@ import { Pagination } from '@/components/reports/Pagination';
 import { useReportFilters } from '@/hooks/useReportFilters';
 import { useReports } from '@/hooks/useReports';
 
+const DND_MIME = 'application/x-htmlhub-nav';
+
 // 首页 = 报告列表（客户端渲染，方便交互）
 export default function HomePage() {
   const filters = useReportFilters();
   const reportFilters = useMemo(
     () => ({
+      category: filters.selectedCategory,
       project: filters.selectedProject,
       iteration: filters.selectedIteration,
       query: filters.q,
     }),
-    [filters.selectedProject, filters.selectedIteration, filters.q],
+    [filters.selectedCategory, filters.selectedProject, filters.selectedIteration, filters.q],
   );
   const reports = useReports(reportFilters);
+  const selectedCategoryLabel = useMemo(
+    () => reports.tree.find((item) => item.slug === filters.selectedCategory)?.name ?? null,
+    [reports.tree, filters.selectedCategory],
+  );
 
   return (
-    <div className="container py-5 md:py-6 lg:py-8">
-      <div className="grid grid-cols-1 gap-5 xl:grid-cols-[260px_minmax(0,1fr)] xl:gap-6">
+    <div className="container py-5 md:py-6 lg:py-8 xl:min-h-[calc(100dvh-3.5rem)]">
+      <div className="grid grid-cols-1 gap-5 xl:grid-cols-[340px_minmax(0,1fr)] xl:gap-6 xl:items-start">
         <ReportSidebar
           tree={reports.tree}
           loading={reports.loading}
+          selectedCategory={filters.selectedCategory}
           selectedProject={filters.selectedProject}
           selectedIteration={filters.selectedIteration}
+          expandedCategories={filters.expandedCategories}
           expandedProjects={filters.expandedProjects}
           onSelectAll={filters.selectAllReports}
+          onSelectCategory={filters.selectCategory}
           onSelectProject={filters.selectProject}
-          onSelectIteration={filters.selectIteration}
+          onCreateCategory={async (name) => {
+            await reports.createCategory(name);
+          }}
+          onUpdateCategory={async (slug, name) => {
+            await reports.updateCategory(slug, name);
+          }}
+          onDeleteCategory={async (slug) => {
+            await reports.deleteCategory(slug);
+          }}
+          onUpdateProject={async (category, project, newProject) => {
+            await reports.updateProject(category, project, newProject);
+          }}
+          onDeleteProject={async (category, project) => {
+            await reports.deleteProject(category, project);
+            filters.selectCategory(category);
+          }}
+          onMoveProject={async (category, project, targetCategory, targetProject) => {
+            await reports.moveProject(category, project, targetCategory, targetProject);
+          }}
+          onMoveReport={async (id, category, project) => {
+            await reports.moveReport(id, category, project);
+          }}
+          onUpdateReportTitle={async (id, title) => {
+            await reports.updateReportTitle(id, title);
+          }}
+          onDeleteReport={reports.deleteReport}
         />
 
         <section className="min-w-0">
@@ -47,6 +82,7 @@ export default function HomePage() {
           />
 
           <ActiveReportFilters
+            selectedCategoryLabel={selectedCategoryLabel}
             selectedProject={filters.selectedProject}
             selectedIteration={filters.selectedIteration}
             query={filters.q}
@@ -116,8 +152,21 @@ export default function HomePage() {
                 <ReportCard
                   report={report}
                   selected={reports.selectedIds.has(report.id)}
+                  hasSelection={reports.selectedIds.size > 0}
                   onToggleSelect={reports.toggleSelect}
+                  onRename={reports.updateReportTitle}
                   onDelete={reports.deleteReport}
+                  onDragStart={(event) => {
+                    const payload = JSON.stringify({
+                      kind: 'report',
+                      id: report.id,
+                      category: report.category,
+                      project: report.project,
+                    });
+                    event.dataTransfer.effectAllowed = 'move';
+                    event.dataTransfer.setData(DND_MIME, payload);
+                    event.dataTransfer.setData('text/plain', payload);
+                  }}
                 />
               </div>
             ))}

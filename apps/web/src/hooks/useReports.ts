@@ -2,19 +2,20 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { alertDialog, confirmDialog } from '@/components/ui/Dialog';
-import { api, type ProjectNode, type PageDto } from '@/lib/api';
+import { api, type CategoryDto, type CategoryNode, type PageDto } from '@/lib/api';
 
 // 每页显示的报告数量
 const PAGE_SIZE = 20;
 
 interface ReportFilters {
+  category: string | null;
   project: string | null;
   iteration: string | null;
   query: string;
 }
 
 export function useReports(filters: ReportFilters) {
-  const [tree, setTree] = useState<ProjectNode[]>([]);
+  const [tree, setTree] = useState<CategoryNode[]>([]);
   const [items, setItems] = useState<PageDto[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -75,8 +76,9 @@ export function useReports(filters: ReportFilters) {
     setError(null);
     try {
       const [treeRes, listRes] = await Promise.all([
-        api.projects(),
+        api.categoryTree(),
         api.list({
+          category: nextFilters.category || undefined,
           project: nextFilters.project || undefined,
           iteration: nextFilters.iteration || undefined,
           q: nextFilters.query || undefined,
@@ -96,11 +98,61 @@ export function useReports(filters: ReportFilters) {
     }
   }, []);
 
+  const createCategory = useCallback(async (name: string): Promise<CategoryDto> => {
+    const result = await api.createCategory(name);
+    await fetchList(filters, page);
+    return result;
+  }, [fetchList, filters, page]);
+
+  const updateCategory = useCallback(async (slug: string, name: string): Promise<CategoryDto> => {
+    const result = await api.updateCategory(slug, name);
+    await fetchList(filters, page);
+    return result;
+  }, [fetchList, filters, page]);
+
+  const deleteCategory = useCallback(async (slug: string): Promise<void> => {
+    const result = await api.deleteCategory(slug);
+    if (result.migrated > 0) {
+      await alertDialog(`分类已删除，${result.migrated} 个报告已迁移到默认分类。`, { type: 'success', title: '删除成功' });
+    }
+    await fetchList(filters, page);
+  }, [fetchList, filters, page]);
+
+  const updateProject = useCallback(async (category: string, project: string, newProject: string) => {
+    const result = await api.updateProject(category, project, newProject);
+    await fetchList(filters, page);
+    return result;
+  }, [fetchList, filters, page]);
+
+  const deleteProject = useCallback(async (category: string, project: string) => {
+    const result = await api.deleteProject(category, project);
+    await fetchList(filters, page);
+    return result;
+  }, [fetchList, filters, page]);
+
+  const moveProject = useCallback(async (category: string, project: string, targetCategory: string, targetProject?: string) => {
+    const result = await api.moveProject(category, project, targetCategory, targetProject);
+    await fetchList(filters, page);
+    return result;
+  }, [fetchList, filters, page]);
+
+  const moveReport = useCallback(async (id: string, category: string, project: string) => {
+    const result = await api.moveReport(id, category, project);
+    await fetchList(filters, page);
+    return result;
+  }, [fetchList, filters, page]);
+
+  const updateReportTitle = useCallback(async (id: string, title: string) => {
+    const result = await api.updateReportTitle(id, title);
+    await fetchList(filters, page);
+    return result;
+  }, [fetchList, filters, page]);
+
   // 筛选条件变化时重置到第 1 页，并清空选择
   useEffect(() => {
     setPage(1);
     setSelectedIds(new Set());
-  }, [filters.project, filters.iteration, filters.query]);
+  }, [filters.category, filters.project, filters.iteration, filters.query]);
 
   // 翻页时清空选择
   useEffect(() => {
@@ -161,6 +213,14 @@ export function useReports(filters: ReportFilters) {
     total,
     loading: initialLoading,
     error,
+    createCategory,
+    updateCategory,
+    deleteCategory,
+    updateProject,
+    deleteProject,
+    moveProject,
+    moveReport,
+    updateReportTitle,
     deleteReport,
     // 选择相关
     selectedIds,

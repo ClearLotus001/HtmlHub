@@ -23,6 +23,7 @@ import { ManifestResolver, ManifestOverrides } from './manifest-resolver';
 
 // 列表查询参数
 export interface ListQuery {
+  category?: string;
   project?: string;
   iteration?: string;
   q?: string;
@@ -30,22 +31,56 @@ export interface ListQuery {
   pageSize?: number;
 }
 
+export interface CategoryDto {
+  slug: string;
+  name: string;
+  report_count: number;
+}
+
+export interface ProjectReportNode {
+  id: string;
+  title: string;
+  uploaded_at: string;
+}
+
+export interface CategoryTreeNode {
+  slug: string;
+  name: string;
+  report_count: number;
+  projects: { project: string; report_count: number; reports: ProjectReportNode[] }[];
+}
+
+interface CategoryRow {
+  slug: string;
+  name: string;
+  created_at: string;
+}
+
 @Injectable()
 export class PagesService {
   private readonly logger = new Logger(PagesService.name);
+  private readonly pageFromSql = `
+    FROM reports
+    LEFT JOIN categories ON categories.slug = reports.category
+  `;
+  private readonly pageSelectSql = `
+    SELECT reports.*, categories.name AS category_name
+    ${this.pageFromSql}
+  `;
 
   // 预编译语句缓存（better-sqlite3 推荐做法，避免重复 prepare 开销）
   private readonly stmts: ReturnType<typeof this.prepareStatements>;
 
   constructor(@Inject(DB_TOKEN) private readonly db: Database.Database) {
     this.stmts = this.prepareStatements();
+    this.migrateLegacyIterationDirs();
   }
 
   /** 集中预编译所有常用 SQL 语句 */
   private prepareStatements() {
     return {
       findById: this.db.prepare<{ id: string }>(
-        'SELECT * FROM reports WHERE id = @id AND deleted_at IS NULL',
+        `${this.pageSelectSql} WHERE reports.id = @id AND reports.deleted_at IS NULL`,
       ),
       findByIdIncludeDeleted: this.db.prepare<{ id: string }>(
         'SELECT * FROM reports WHERE id = @id',
@@ -53,22 +88,66 @@ export class PagesService {
       checkIdExists: this.db.prepare<{ id: string }>(
         'SELECT id FROM reports WHERE id = @id AND deleted_at IS NULL',
       ),
-      projectTree: this.db.prepare(`
-        SELECT project, iteration, COUNT(*) AS cnt
-        FROM reports
-        WHERE deleted_at IS NULL
-        GROUP BY project, iteration
-        ORDER BY project ASC, iteration DESC
+      listCategories: this.db.prepare(`
+        SELECT
+          categories.slug,
+          categories.name,
+          COUNT(reports.id) AS report_count
+        FROM categories
+        LEFT JOIN reports
+          ON reports.category = categories.slug
+         AND reports.deleted_at IS NULL
+        GROUP BY categories.slug, categories.name
+        ORDER BY
+          CASE WHEN categories.slug = 'default' THEN 0 ELSE 1 END,
+          categories.created_at ASC,
+          categories.name COLLATE NOCASE ASC
       `),
+      getCategoryBySlug: this.db.prepare<{ slug: string }>(
+        'SELECT slug, name, created_at FROM categories WHERE slug = @slug',
+      ),
+      getCategoryByName: this.db.prepare<{ name: string }>(
+        'SELECT slug, name, created_at FROM categories WHERE name = @name',
+      ),
+      insertCategory: this.db.prepare<Pick<CategoryRow, 'slug' | 'name' | 'created_at'>>(
+        'INSERT INTO categories (slug, name, created_at) VALUES (@slug, @name, @created_at)',
+      ),
+      updateCategoryName: this.db.prepare<{ slug: string; name: string }>(
+        'UPDATE categories SET name = @name WHERE slug = @slug',
+      ),
+      deleteCategory: this.db.prepare<{ slug: string }>(
+        'DELETE FROM categories WHERE slug = @slug',
+      ),
+      countReportsByCategory: this.db.prepare<{ category: string }>(
+        'SELECT COUNT(*) AS c FROM reports WHERE category = @category AND deleted_at IS NULL',
+      ),
+      reassignReports: this.db.prepare<{ oldCategory: string; newCategory: string }>(
+        'UPDATE reports SET category = @newCategory WHERE category = @oldCategory',
+      ),
+      countReportsByProject: this.db.prepare<{ category: string; project: string }>(
+        'SELECT COUNT(*) AS c FROM reports WHERE category = @category AND project = @project AND deleted_at IS NULL',
+      ),
+      listReportsByProject: this.db.prepare<{ category: string; project: string }>(
+        'SELECT * FROM reports WHERE category = @category AND project = @project AND deleted_at IS NULL',
+      ),
+      updateProject: this.db.prepare<{ category: string; oldProject: string; newProject: string }>(
+        'UPDATE reports SET project = @newProject WHERE category = @category AND project = @oldProject',
+      ),
+      updateReportLocation: this.db.prepare<{ id: string; category: string; project: string }>(
+        'UPDATE reports SET category = @category, project = @project WHERE id = @id',
+      ),
+      updateReportTitle: this.db.prepare<{ id: string; title: string }>(
+        'UPDATE reports SET title = @title WHERE id = @id AND deleted_at IS NULL',
+      ),
       listForCleanup: this.db.prepare<{ limit: number }>(
         'SELECT * FROM reports WHERE purged_at IS NULL ORDER BY uploaded_at ASC LIMIT @limit',
       ),
       insert: this.db.prepare(`
         INSERT INTO reports
-          (id, title, project, iteration, version, author, tags, summary, cover,
+          (id, title, category, project, iteration, version, author, tags, summary, cover,
            entry, size_bytes, file_count, source, created_at, uploaded_at)
         VALUES
-          (@id, @title, @project, @iteration, @version, @author, @tags, @summary, @cover,
+          (@id, @title, @category, @project, @iteration, @version, @author, @tags, @summary, @cover,
            @entry, @size_bytes, @file_count, @source, @created_at, @uploaded_at)
       `),
       softDelete: this.db.prepare<{ deleted_at: string; trashed_path: string | null; id: string }>(
@@ -94,19 +173,30 @@ export class PagesService {
     const pageSize = Math.min(100, Math.max(1, query.pageSize || 20));
     const offset = (page - 1) * pageSize;
 
-    const where: string[] = ['deleted_at IS NULL'];
+    const where: string[] = ['reports.deleted_at IS NULL'];
     const params: Record<string, any> = {};
 
+    if (query.category) {
+      where.push('reports.category = @category');
+      params.category = query.category;
+    }
     if (query.project) {
-      where.push('project = @project');
+      where.push('reports.project = @project');
       params.project = query.project;
     }
     if (query.iteration) {
-      where.push('iteration = @iteration');
+      where.push('reports.iteration = @iteration');
       params.iteration = query.iteration;
     }
     if (query.q) {
-      where.push('(title LIKE @q OR summary LIKE @q OR tags LIKE @q)');
+      where.push(`(
+        reports.title LIKE @q OR
+        reports.summary LIKE @q OR
+        reports.tags LIKE @q OR
+        reports.project LIKE @q OR
+        reports.iteration LIKE @q OR
+        categories.name LIKE @q
+      )`);
       params.q = `%${query.q}%`;
     }
 
@@ -115,14 +205,14 @@ export class PagesService {
     // 动态查询无法预编译，但使用命名参数仍然安全
     const total = (
       this.db
-        .prepare(`SELECT COUNT(*) AS c FROM reports ${whereSql}`)
+        .prepare(`SELECT COUNT(*) AS c ${this.pageFromSql} ${whereSql}`)
         .get(params) as { c: number }
     ).c;
 
     const rows = this.db
       .prepare(
-        `SELECT * FROM reports ${whereSql}
-         ORDER BY uploaded_at DESC
+        `${this.pageSelectSql} ${whereSql}
+         ORDER BY reports.uploaded_at DESC
          LIMIT @limit OFFSET @offset`,
       )
       .all({ ...params, limit: pageSize, offset }) as PageRow[];
@@ -137,26 +227,272 @@ export class PagesService {
     return rowToDto(row);
   }
 
-  /** 项目/迭代聚合，用于前端侧栏树 */
-  projectTree(): { project: string; iterations: string[] }[] {
-    const rows = this.stmts.projectTree.all() as {
-      project: string;
-      iteration: string;
-      cnt: number;
-    }[];
+  /** 分类 / 项目 / 报告聚合，用于前端侧栏树 */
+  projectTree(): CategoryTreeNode[] {
+    const categories = this.listCategories();
+    const rows = this.db.prepare(`
+      SELECT
+        reports.category AS slug,
+        reports.project,
+        reports.id,
+        reports.title,
+        reports.uploaded_at
+      FROM reports
+      WHERE reports.deleted_at IS NULL
+      ORDER BY reports.category ASC, reports.project ASC, reports.uploaded_at DESC
+    `).all() as { slug: string; project: string; id: string; title: string; uploaded_at: string }[];
 
-    const map = new Map<string, Set<string>>();
-    for (const r of rows) {
-      if (!map.has(r.project)) map.set(r.project, new Set());
-      map.get(r.project)!.add(r.iteration);
+    const projectMap = new Map<string, Map<string, { project: string; report_count: number; reports: ProjectReportNode[] }>>();
+    for (const row of rows) {
+      if (!projectMap.has(row.slug)) {
+        projectMap.set(row.slug, new Map());
+      }
+      const projects = projectMap.get(row.slug)!;
+      if (!projects.has(row.project)) {
+        projects.set(row.project, { project: row.project, report_count: 0, reports: [] });
+      }
+      const project = projects.get(row.project)!;
+      project.report_count += 1;
+      project.reports.push({ id: row.id, title: row.title, uploaded_at: row.uploaded_at });
     }
-    return Array.from(map.entries()).map(([project, set]) => ({
-      project,
-      iterations: Array.from(set),
+
+    return categories.map((cat) => ({
+      slug: cat.slug,
+      name: cat.name,
+      report_count: cat.report_count,
+      projects: Array.from(projectMap.get(cat.slug)?.values() ?? []),
     }));
   }
 
-  // --------------------- 变更 ---------------------
+  /** 分类列表（包含空分类） */
+  listCategories(): CategoryDto[] {
+    return this.stmts.listCategories.all() as CategoryDto[];
+  }
+
+  /** 新建分类 */
+  createCategory(name: string): CategoryDto {
+    const normalizedName = name.trim().replace(/\s+/g, ' ');
+    if (!normalizedName) {
+      throw new BadRequestException('分类名称不能为空');
+    }
+
+    const existing = this.stmts.getCategoryByName.get({ name: normalizedName }) as CategoryRow | undefined;
+    if (existing) {
+      throw new BadRequestException(`分类已存在：${normalizedName}`);
+    }
+
+    const baseSlug = this.slugifyCategoryName(normalizedName);
+    const slug = this.buildUniqueCategorySlug(baseSlug);
+    const created_at = new Date().toISOString();
+    this.stmts.insertCategory.run({ slug, name: normalizedName, created_at });
+
+    return this.getCategoryDto(slug);
+  }
+
+  /** 编辑分类名称 */
+  updateCategory(slug: string, name: string): CategoryDto {
+    if (slug === 'default') {
+      throw new BadRequestException('默认分类不可编辑');
+    }
+
+    const existing = this.stmts.getCategoryBySlug.get({ slug }) as CategoryRow | undefined;
+    if (!existing) {
+      throw new NotFoundException(`分类不存在：${slug}`);
+    }
+
+    const normalizedName = name.trim().replace(/\s+/g, ' ');
+    if (!normalizedName) {
+      throw new BadRequestException('分类名称不能为空');
+    }
+
+    // 检查名称是否已被其他分类使用
+    const dup = this.stmts.getCategoryByName.get({ name: normalizedName }) as CategoryRow | undefined;
+    if (dup && dup.slug !== slug) {
+      throw new BadRequestException(`分类名称已存在：${normalizedName}`);
+    }
+
+    this.stmts.updateCategoryName.run({ slug, name: normalizedName });
+    return this.getCategoryDto(slug);
+  }
+
+  /** 删除分类（将分类下报告迁移到默认分类） */
+  deleteCategory(slug: string): { ok: boolean; migrated: number } {
+    if (slug === 'default') {
+      throw new BadRequestException('默认分类不可删除');
+    }
+
+    const existing = this.stmts.getCategoryBySlug.get({ slug }) as CategoryRow | undefined;
+    if (!existing) {
+      throw new NotFoundException(`分类不存在：${slug}`);
+    }
+
+    // 统计该分类下的报告数量
+    const { c: reportCount } = this.stmts.countReportsByCategory.get({ category: slug }) as { c: number };
+
+    // 事务内执行：迁移报告 + 删除分类
+    return this.db.transaction(() => {
+      let migrated = 0;
+      if (reportCount > 0) {
+        // 将该分类下的报告迁移到默认分类，同时移动物理文件
+        const rows = this.db.prepare(
+          'SELECT * FROM reports WHERE category = @category AND deleted_at IS NULL',
+        ).all({ category: slug }) as PageRow[];
+
+        for (const row of rows) {
+          const oldDir = this.finalDirOf(row.category, row.project, row.id);
+          const newDir = this.finalDirOf('default', row.project, row.id);
+          if (fs.existsSync(oldDir)) {
+            fs.mkdirSync(path.dirname(newDir), { recursive: true });
+            try {
+              fs.renameSync(oldDir, newDir);
+            } catch {
+              // 如果移动失败（跨盘等），用复制+删除
+              fs.cpSync(oldDir, newDir, { recursive: true });
+              this.rmrf(oldDir);
+            }
+          }
+        }
+
+        this.stmts.reassignReports.run({ oldCategory: slug, newCategory: 'default' });
+        migrated = reportCount;
+      }
+
+      this.stmts.deleteCategory.run({ slug });
+      return { ok: true, migrated };
+    })();
+  }
+
+  /** 重命名项目目录 */
+  renameProject(category: string, project: string, newProject: string): { ok: boolean; updated: number; project: string } {
+    this.ensureCategoryExists(category);
+    if (this.isReservedDefaultProject(category, project)) {
+      throw new BadRequestException('默认项目目录不可重命名');
+    }
+    if (project === newProject) {
+      const { c } = this.stmts.countReportsByProject.get({ category, project }) as { c: number };
+      return { ok: true, updated: c, project: newProject };
+    }
+
+    const { c: oldCount } = this.stmts.countReportsByProject.get({ category, project }) as { c: number };
+    if (oldCount === 0) {
+      throw new NotFoundException(`项目不存在：${project}`);
+    }
+
+    const { c: targetCount } = this.stmts.countReportsByProject.get({ category, project: newProject }) as { c: number };
+    if (targetCount > 0) {
+      throw new BadRequestException(`项目已存在：${newProject}`);
+    }
+
+    const rows = this.stmts.listReportsByProject.all({ category, project }) as PageRow[];
+    return this.db.transaction(() => {
+      for (const row of rows) {
+        const oldDir = this.finalDirOf(row.category, row.project, row.id);
+        const newDir = this.finalDirOf(row.category, newProject, row.id);
+        if (!fs.existsSync(oldDir)) continue;
+        fs.mkdirSync(path.dirname(newDir), { recursive: true });
+        try {
+          fs.renameSync(oldDir, newDir);
+        } catch {
+          fs.cpSync(oldDir, newDir, { recursive: true });
+          this.rmrf(oldDir);
+        }
+      }
+
+      this.stmts.updateProject.run({ category, oldProject: project, newProject });
+      this.removeEmptyParents(path.join(config.reportsDir, category, project), path.join(config.reportsDir, category, project));
+      return { ok: true, updated: rows.length, project: newProject };
+    })();
+  }
+
+  /** 删除项目目录（将项目下报告移入回收站） */
+  deleteProject(category: string, project: string): { ok: boolean; deleted: number } {
+    this.ensureCategoryExists(category);
+    if (this.isReservedDefaultProject(category, project)) {
+      throw new BadRequestException('默认项目目录不可删除');
+    }
+    const rows = this.stmts.listReportsByProject.all({ category, project }) as PageRow[];
+    if (rows.length === 0) {
+      throw new NotFoundException(`项目不存在：${project}`);
+    }
+
+    return this.db.transaction(() => {
+      for (const row of rows) {
+        this.softDelete(row.id, 'project-delete');
+      }
+      return { ok: true, deleted: rows.length };
+    })();
+  }
+
+  /** 移动单个报告到目标分类/项目 */
+  moveReport(id: string, targetCategory: string, targetProject: string): PageDto {
+    this.ensureCategoryExists(targetCategory);
+    const row = this.stmts.findById.get({ id }) as PageRow | undefined;
+    if (!row) throw new NotFoundException(`页面不存在：${id}`);
+
+    const resolvedTargetProject = this.isReservedDefaultProject(row.category, row.project)
+      && targetCategory !== 'default'
+      && targetProject === 'default'
+      ? targetCategory
+      : targetProject;
+
+    if (row.category === targetCategory && row.project === resolvedTargetProject) {
+      return rowToDto(row);
+    }
+
+    return this.db.transaction(() => {
+      this.moveReportDir(row, targetCategory, resolvedTargetProject);
+      this.stmts.updateReportLocation.run({ id, category: targetCategory, project: resolvedTargetProject });
+      return this.findOne(id);
+    })();
+  }
+
+  /** 重命名报告标题 */
+  updateReportTitle(id: string, title: string): PageDto {
+    const normalizedTitle = title.trim().replace(/\s+/g, ' ');
+    if (!normalizedTitle) throw new BadRequestException('报告标题不能为空');
+
+    const row = this.stmts.findById.get({ id }) as PageRow | undefined;
+    if (!row) throw new NotFoundException(`页面不存在：${id}`);
+    if (row.title === normalizedTitle) return rowToDto(row);
+
+    return this.db.transaction(() => {
+      this.stmts.updateReportTitle.run({ id, title: normalizedTitle });
+      this.syncManifestTitle(row, normalizedTitle);
+      return this.findOne(id);
+    })();
+  }
+
+  /** 移动项目目录到目标分类/项目；目标项目存在时合并 */
+  moveProject(
+    category: string,
+    project: string,
+    targetCategory: string,
+    targetProject: string = project,
+  ): { ok: boolean; moved: number; category: string; project: string } {
+    this.ensureCategoryExists(category);
+    this.ensureCategoryExists(targetCategory);
+    if (this.isReservedDefaultProject(category, project)) {
+      throw new BadRequestException('默认项目目录不可移动');
+    }
+
+    const rows = this.stmts.listReportsByProject.all({ category, project }) as PageRow[];
+    if (rows.length === 0) {
+      throw new NotFoundException(`项目不存在：${project}`);
+    }
+
+    if (category === targetCategory && project === targetProject) {
+      return { ok: true, moved: 0, category: targetCategory, project: targetProject };
+    }
+
+    return this.db.transaction(() => {
+      for (const row of rows) {
+        this.moveReportDir(row, targetCategory, targetProject);
+        this.stmts.updateReportLocation.run({ id: row.id, category: targetCategory, project: targetProject });
+      }
+      this.removeEmptyParents(path.join(config.reportsDir, category, project), path.join(config.reportsDir, category, project));
+      return { ok: true, moved: rows.length, category: targetCategory, project: targetProject };
+    })();
+  }
 
   /**
    * 接收上传的 zip 文件，解压 → 解析/推断 manifest → 入库。
@@ -266,7 +602,7 @@ export class PagesService {
     if (!row) throw new NotFoundException(`页面不存在：${id}`);
 
     const now = new Date().toISOString();
-    const fromDir = this.finalDirOf(row.project, row.iteration, row.id);
+    const fromDir = this.finalDirOf(row.category, row.project, row.id);
     const trashDir = path.join(config.trashDir, `${row.id}-${Date.now()}`);
 
     let trashedPath: string | null = null;
@@ -291,7 +627,7 @@ export class PagesService {
       throw new BadRequestException('回收站文件不存在，无法恢复');
     }
 
-    const finalDir = this.finalDirOf(row.project, row.iteration, row.id);
+    const finalDir = this.finalDirOf(row.category, row.project, row.id);
     if (fs.existsSync(finalDir)) this.rmrf(finalDir);
     fs.mkdirSync(path.dirname(finalDir), { recursive: true });
     fs.renameSync(row.trashed_path, finalDir);
@@ -312,7 +648,7 @@ export class PagesService {
       this.rmrf(row.trashed_path);
     } else if (!row.deleted_at) {
       // 兜底：如果还在原位，也要一并删
-      const origin = this.finalDirOf(row.project, row.iteration, row.id);
+      const origin = this.finalDirOf(row.category, row.project, row.id);
       if (fs.existsSync(origin)) {
         freed = this.dirSize(origin);
         this.rmrf(origin);
@@ -379,7 +715,7 @@ export class PagesService {
   /** 获取页面物理目录（下载用） */
   getPageDir(id: string): { dir: string; page: PageDto } {
     const page = this.findOne(id);
-    const dir = this.finalDirOf(page.project, page.iteration, page.id);
+    const dir = this.finalDirOf(page.category, page.project, page.id);
     if (!fs.existsSync(dir)) {
       throw new NotFoundException(`物理目录缺失：${id}`);
     }
@@ -404,11 +740,16 @@ export class PagesService {
     const pageSize = Math.min(100, Math.max(1, query.pageSize || 20));
     const offset = (page - 1) * pageSize;
 
-    const where: string[] = ['deleted_at IS NOT NULL', 'purged_at IS NULL'];
+    const where: string[] = ['reports.deleted_at IS NOT NULL', 'reports.purged_at IS NULL'];
     const params: Record<string, any> = {};
 
     if (query.q) {
-      where.push('(title LIKE @q OR summary LIKE @q OR tags LIKE @q)');
+      where.push(`(
+        reports.title LIKE @q OR
+        reports.summary LIKE @q OR
+        reports.tags LIKE @q OR
+        categories.name LIKE @q
+      )`);
       params.q = `%${query.q}%`;
     }
 
@@ -416,14 +757,14 @@ export class PagesService {
 
     const total = (
       this.db
-        .prepare(`SELECT COUNT(*) AS c FROM reports ${whereSql}`)
+        .prepare(`SELECT COUNT(*) AS c ${this.pageFromSql} ${whereSql}`)
         .get(params) as { c: number }
     ).c;
 
     const rows = this.db
       .prepare(
-        `SELECT * FROM reports ${whereSql}
-         ORDER BY deleted_at DESC
+        `${this.pageSelectSql} ${whereSql}
+         ORDER BY reports.deleted_at DESC
          LIMIT @limit OFFSET @offset`,
       )
       .all({ ...params, limit: pageSize, offset }) as PageRow[];
@@ -448,6 +789,7 @@ export class PagesService {
     this.stmts.insert.run({
       id: manifest.id,
       title: manifest.title,
+      category: this.ensureCategoryExists(manifest.category || 'default'),
       project: manifest.project,
       iteration: manifest.iteration,
       version: manifest.version || null,
@@ -472,14 +814,16 @@ export class PagesService {
     fileCount: number,
     source: PageSource,
   ): PageDto {
+    const category = this.ensureCategoryExists(manifest.category || 'default');
     const finalDir = this.finalDirOf(
+      category,
       manifest.project,
-      manifest.iteration,
       manifest.id,
     );
     let moved = false;
 
     try {
+      manifest.category = category;
       return this.db.transaction(() => {
         if (fs.existsSync(finalDir)) this.rmrf(finalDir);
         fs.mkdirSync(path.dirname(finalDir), { recursive: true });
@@ -498,8 +842,143 @@ export class PagesService {
     }
   }
 
-  private finalDirOf(project: string, iteration: string, id: string): string {
-    return path.join(config.reportsDir, project, iteration, id);
+  private ensureCategoryExists(slug: string): string {
+    const row = this.stmts.getCategoryBySlug.get({ slug }) as CategoryRow | undefined;
+    if (!row) {
+      throw new BadRequestException(`分类不存在：${slug}`);
+    }
+    return row.slug;
+  }
+
+  private getCategoryDto(slug: string): CategoryDto {
+    const row = this.db.prepare(`
+      SELECT
+        categories.slug,
+        categories.name,
+        COUNT(reports.id) AS report_count
+      FROM categories
+      LEFT JOIN reports
+        ON reports.category = categories.slug
+       AND reports.deleted_at IS NULL
+      WHERE categories.slug = @slug
+      GROUP BY categories.slug, categories.name
+    `).get({ slug }) as CategoryDto | undefined;
+
+    if (!row) {
+      throw new NotFoundException(`分类不存在：${slug}`);
+    }
+    return row;
+  }
+
+  private slugifyCategoryName(name: string): string {
+    const ascii = name
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 24);
+
+    if (ascii) return ascii;
+    return `category-${Date.now().toString(36)}`;
+  }
+
+  private buildUniqueCategorySlug(baseSlug: string): string {
+    const normalizedBase = baseSlug.slice(0, 32) || `category-${Date.now().toString(36)}`;
+    let candidate = normalizedBase;
+    let index = 2;
+
+    while (this.stmts.getCategoryBySlug.get({ slug: candidate })) {
+      const suffix = `-${index}`;
+      candidate = `${normalizedBase.slice(0, Math.max(1, 40 - suffix.length))}${suffix}`;
+      index += 1;
+    }
+
+    return candidate;
+  }
+
+  private finalDirOf(category: string, project: string, id: string): string {
+    return path.join(config.reportsDir, category, project, id);
+  }
+
+  private isReservedDefaultProject(category: string, project: string): boolean {
+    return category === 'default' && project === 'default';
+  }
+
+  private syncManifestTitle(row: PageRow, title: string): void {
+    const manifestPath = path.join(this.finalDirOf(row.category, row.project, row.id), 'manifest.json');
+    if (!fs.existsSync(manifestPath)) return;
+
+    try {
+      const raw = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as Record<string, unknown>;
+      raw.title = title;
+      fs.writeFileSync(manifestPath, JSON.stringify(raw, null, 2), 'utf-8');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '未知错误';
+      this.logger.warn(`同步 manifest 标题失败：${row.id} - ${message}`);
+    }
+  }
+
+  private moveReportDir(row: PageRow, targetCategory: string, targetProject: string): void {
+    const oldDir = this.finalDirOf(row.category, row.project, row.id);
+    const newDir = this.finalDirOf(targetCategory, targetProject, row.id);
+    if (oldDir === newDir || !fs.existsSync(oldDir)) return;
+    if (fs.existsSync(newDir)) {
+      throw new BadRequestException(`目标目录已存在：${row.id}`);
+    }
+
+    fs.mkdirSync(path.dirname(newDir), { recursive: true });
+    try {
+      fs.renameSync(oldDir, newDir);
+    } catch {
+      fs.cpSync(oldDir, newDir, { recursive: true });
+      this.rmrf(oldDir);
+    }
+
+    if (this.isReservedDefaultProject(row.category, row.project)) {
+      fs.mkdirSync(path.join(config.reportsDir, 'default', 'default'), { recursive: true });
+      return;
+    }
+    this.removeEmptyParents(path.dirname(oldDir), path.join(config.reportsDir, row.category, row.project));
+  }
+
+  private legacyDirOf(category: string, project: string, iteration: string, id: string): string {
+    return path.join(config.reportsDir, category, project, iteration, id);
+  }
+
+  private migrateLegacyIterationDirs(): void {
+    const rows = this.db.prepare(`
+      SELECT id, category, project, iteration
+      FROM reports
+      WHERE deleted_at IS NULL
+    `).all() as Pick<PageRow, 'id' | 'category' | 'project' | 'iteration'>[];
+
+    for (const row of rows) {
+      const legacyDir = this.legacyDirOf(row.category, row.project, row.iteration, row.id);
+      const finalDir = this.finalDirOf(row.category, row.project, row.id);
+      if (!fs.existsSync(legacyDir) || fs.existsSync(finalDir)) continue;
+
+      fs.mkdirSync(path.dirname(finalDir), { recursive: true });
+      try {
+        fs.renameSync(legacyDir, finalDir);
+      } catch {
+        fs.cpSync(legacyDir, finalDir, { recursive: true });
+        this.rmrf(legacyDir);
+      }
+
+      this.removeEmptyParents(path.dirname(legacyDir), path.join(config.reportsDir, row.category, row.project));
+    }
+  }
+
+  private removeEmptyParents(startDir: string, stopDir: string): void {
+    let current = startDir;
+    const stop = path.resolve(stopDir);
+    while (path.resolve(current).startsWith(stop)) {
+      if (!fs.existsSync(current) || fs.readdirSync(current).length > 0) break;
+      fs.rmdirSync(current);
+      if (path.resolve(current) === stop) break;
+      current = path.dirname(current);
+    }
   }
 
   private makeStagingDir(): string {

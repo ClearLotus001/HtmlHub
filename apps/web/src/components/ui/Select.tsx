@@ -1,13 +1,13 @@
 'use client';
 
-import * as React from 'react';
-import { ChevronDown, Check } from 'lucide-react';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { Check, ChevronDown } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
-/* ==================== 自定义 Select 下拉框 ==================== */
-
-export interface SelectOption {
+interface SelectOption {
   value: string;
   label: string;
+  description?: string;
 }
 
 interface SelectProps {
@@ -15,9 +15,9 @@ interface SelectProps {
   options: SelectOption[];
   onChange: (value: string) => void;
   placeholder?: string;
+  disabled?: boolean;
+  loading?: boolean;
   className?: string;
-  /** 下拉框最小宽度 */
-  minWidth?: number;
 }
 
 export function Select({
@@ -25,18 +25,18 @@ export function Select({
   options,
   onChange,
   placeholder = '请选择',
-  className = '',
-  minWidth,
+  disabled = false,
+  loading = false,
+  className,
 }: SelectProps) {
-  const [open, setOpen] = React.useState(false);
-  const [highlightIdx, setHighlightIdx] = React.useState(-1);
-  const containerRef = React.useRef<HTMLDivElement>(null);
-  const listRef = React.useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
 
-  const selectedOption = options.find((o) => o.value === value);
+  const selected = options.find((o) => o.value === value);
 
   // 点击外部关闭
-  React.useEffect(() => {
+  useEffect(() => {
     if (!open) return;
     const handler = (e: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
@@ -47,129 +47,89 @@ export function Select({
     return () => document.removeEventListener('mousedown', handler);
   }, [open]);
 
-  // 打开时重置高亮到当前选中项
-  React.useEffect(() => {
-    if (open) {
-      const idx = options.findIndex((o) => o.value === value);
-      setHighlightIdx(idx >= 0 ? idx : 0);
-    }
-  }, [open, options, value]);
-
-  // 键盘导航
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (!open) {
-      if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown') {
-        e.preventDefault();
-        setOpen(true);
-      }
-      return;
-    }
-
-    switch (e.key) {
-      case 'ArrowDown':
-        e.preventDefault();
-        setHighlightIdx((prev) => Math.min(prev + 1, options.length - 1));
-        break;
-      case 'ArrowUp':
-        e.preventDefault();
-        setHighlightIdx((prev) => Math.max(prev - 1, 0));
-        break;
-      case 'Enter':
-      case ' ':
-        e.preventDefault();
-        if (highlightIdx >= 0 && highlightIdx < options.length) {
-          onChange(options[highlightIdx].value);
-          setOpen(false);
-        }
-        break;
-      case 'Escape':
-        e.preventDefault();
+  // ESC 关闭
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === 'Escape') {
         setOpen(false);
-        break;
-    }
-  };
-
-  // 滚动高亮项到可见区域
-  React.useEffect(() => {
-    if (!open || !listRef.current) return;
-    const el = listRef.current.children[highlightIdx] as HTMLElement | undefined;
-    el?.scrollIntoView({ block: 'nearest' });
-  }, [highlightIdx, open]);
+        triggerRef.current?.focus();
+      }
+    },
+    [],
+  );
 
   return (
-    <div
-      ref={containerRef}
-      className={`relative inline-flex ${className}`}
-      onKeyDown={handleKeyDown}
-      style={minWidth ? { minWidth } : undefined}
-    >
-      {/* 触发按钮 */}
+    <div ref={containerRef} className={cn('relative', className)} onKeyDown={handleKeyDown}>
       <button
+        ref={triggerRef}
         type="button"
-        role="combobox"
-        aria-expanded={open}
+        disabled={disabled}
+        onClick={() => !disabled && setOpen((v) => !v)}
+        className={cn(
+          'flex h-10 w-full items-center justify-between rounded-xl border border-border bg-white px-3 text-sm shadow-sm transition-all duration-200 dark:bg-zinc-900',
+          'outline-none focus-visible:border-primary/50 focus-visible:ring-2 focus-visible:ring-primary/20',
+          'disabled:cursor-not-allowed disabled:opacity-60',
+          open && 'border-primary/50 ring-2 ring-primary/20',
+          !selected && 'text-muted-foreground',
+        )}
         aria-haspopup="listbox"
-        onClick={() => setOpen((prev) => !prev)}
-        className={`
-          inline-flex h-8 w-full items-center justify-between gap-1.5 rounded-lg border
-          px-2.5 text-[12px] font-medium outline-none transition-all duration-200
-          ${open
-            ? 'border-primary/50 bg-card shadow-sm ring-2 ring-primary/20'
-            : 'border-border bg-card hover:border-primary/30 hover:bg-card/80'
-          }
-          text-foreground
-        `}
+        aria-expanded={open}
       >
-        <span className={selectedOption ? 'text-foreground' : 'text-muted-foreground'}>
-          {selectedOption?.label ?? placeholder}
+        <span className="truncate">
+          {loading ? '正在加载...' : selected ? selected.label : placeholder}
         </span>
         <ChevronDown
-          className={`h-3 w-3 shrink-0 text-muted-foreground transition-transform duration-200 ${
-            open ? 'rotate-180' : ''
-          }`}
+          className={cn('ml-2 h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200', open && 'rotate-180')}
         />
       </button>
 
-      {/* 下拉面板 */}
       {open && (
         <div
-          ref={listRef}
+          className="absolute z-50 mt-1.5 max-h-60 w-full overflow-auto rounded-xl border border-border bg-white text-foreground shadow-2xl shadow-black/20 ring-1 ring-black/5 animate-in fade-in slide-in-from-top-1 duration-150 dark:bg-zinc-900 dark:shadow-black/50 dark:ring-white/10"
           role="listbox"
-          className="
-            absolute left-0 top-full z-[9998] mt-1 max-h-48 w-full min-w-[120px] overflow-auto
-            rounded-xl border border-border bg-popover p-1 shadow-lg backdrop-blur-xl
-            animate-macos-scale-in
-          "
         >
-          {options.map((opt, idx) => {
-            const isSelected = opt.value === value;
-            const isHighlighted = idx === highlightIdx;
-            return (
-              <div
-                key={opt.value}
-                role="option"
-                aria-selected={isSelected}
-                onMouseEnter={() => setHighlightIdx(idx)}
-                onClick={() => {
-                  onChange(opt.value);
-                  setOpen(false);
-                }}
-                className={`
-                  flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5
-                  text-[12px] font-medium transition-colors duration-100
-                  ${isHighlighted ? 'bg-primary/10 text-foreground' : 'text-muted-foreground'}
-                  ${isSelected ? 'text-primary' : ''}
-                `}
-              >
-                <span className="flex-1">{opt.label}</span>
-                {isSelected && <Check className="h-3 w-3 shrink-0 text-primary" />}
-              </div>
-            );
-          })}
-          {options.length === 0 && (
-            <div className="px-2.5 py-3 text-center text-[12px] text-muted-foreground">
-              暂无选项
-            </div>
+          {loading ? (
+            <div className="px-3 py-2.5 text-sm text-muted-foreground">正在加载分类...</div>
+          ) : options.length === 0 ? (
+            <div className="px-3 py-2.5 text-sm text-muted-foreground">暂无分类</div>
+          ) : (
+            options.map((option) => {
+              const isSelected = option.value === value;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  role="option"
+                  aria-selected={isSelected}
+                  onClick={() => {
+                    onChange(option.value);
+                    setOpen(false);
+                    triggerRef.current?.focus();
+                  }}
+                  className={cn(
+                    'flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm transition-colors duration-100',
+                    isSelected
+                      ? 'bg-primary/10 text-primary font-medium'
+                      : 'text-foreground hover:bg-accent',
+                  )}
+                >
+                  <span
+                    className={cn(
+                      'flex h-4 w-4 shrink-0 items-center justify-center rounded-md border-2 transition-all duration-150',
+                      isSelected ? 'border-primary bg-primary text-primary-foreground' : 'border-border',
+                    )}
+                  >
+                    {isSelected && <Check className="h-3 w-3" />}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate">{option.label}</div>
+                    {option.description && (
+                      <div className="truncate text-xs text-muted-foreground">{option.description}</div>
+                    )}
+                  </div>
+                </button>
+              );
+            })
           )}
         </div>
       )}

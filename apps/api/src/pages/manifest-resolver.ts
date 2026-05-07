@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { config } from '../config';
 import {
   PageManifest,
+  sanitizeCategorySlug,
   sanitizeIteration,
   sanitizeProject,
 } from './page.types';
@@ -11,6 +12,7 @@ import {
 export interface ManifestOverrides {
   id?: string;
   title?: string;
+  category?: string;
   project?: string;
   iteration?: string;
   version?: string;
@@ -76,7 +78,7 @@ function resolveEntry(rootDir: string, manifestEntry?: string): string {
   }
 
   const files = fs.readdirSync(rootDir);
-  const htmlFile = files.find(f => f.toLowerCase().endsWith('.html') || f.toLowerCase().endsWith('.htm'));
+  const htmlFile = files.find((f) => f.toLowerCase().endsWith('.html') || f.toLowerCase().endsWith('.htm'));
   if (htmlFile) return htmlFile;
 
   throw new Error('未找到入口 HTML 文件（index.html / main.html / *.html）');
@@ -86,7 +88,7 @@ function resolveEntry(rootDir: string, manifestEntry?: string): string {
  * 宽松模式：从目录自动推断 manifest。
  *  - 查找入口 HTML
  *  - 解析 <title>
- *  - 生成 id、填充 project/iteration 等
+ *  - 生成 id、填充 category/project/iteration 等
  */
 function inferFromDirectory(
   dir: string,
@@ -108,9 +110,10 @@ function inferFromDirectory(
 
   // 基础信息
   const now = new Date().toISOString();
+  const inferredCategory = sanitizeCategorySlug(overrides.category, 'default');
   const inferredProject = sanitizeProject(
     overrides.project || undefined,
-    'uncategorized',
+    'default',
   );
   const inferredIteration = sanitizeIteration(
     overrides.iteration || undefined,
@@ -121,6 +124,7 @@ function inferFromDirectory(
     schema_version: '1.0',
     id: overrides.id || `page_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     title: overrides.title || title || path.basename(originalName, path.extname(originalName)) || '未命名页面',
+    category: inferredCategory,
     project: inferredProject,
     iteration: inferredIteration,
     version: overrides.version,
@@ -162,6 +166,7 @@ export const ManifestResolver = {
       // 应用 overrides（覆盖/补充字段）
       if (overrides.id) raw.id = overrides.id;
       if (overrides.title) raw.title = overrides.title;
+      if (overrides.category) raw.category = sanitizeCategorySlug(overrides.category, 'default');
       if (overrides.project) raw.project = overrides.project;
       if (overrides.iteration) raw.iteration = overrides.iteration;
       if (overrides.version) raw.version = overrides.version;

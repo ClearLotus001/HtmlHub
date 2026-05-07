@@ -20,7 +20,7 @@ export interface OpenApiSpec {
   [key: string]: any;
 }
 
-const API_BASE = process.env.NEXT_PUBLIC_API_TARGET || 'http://localhost:3001';
+const API_BASE = process.env.NEXT_PUBLIC_API_TARGET || 'http://21.91.222.45:9090';
 
 /**
  * 获取后端生成的 OpenAPI JSON 规范
@@ -31,7 +31,7 @@ export async function getApiDocsData(): Promise<OpenApiSpec> {
     // 服务端渲染时直接访问后端地址
     const baseUrl = process.env.NODE_ENV === 'development' 
       ? 'http://localhost:3001' 
-      : (process.env.NEXT_PUBLIC_API_TARGET || 'http://localhost:3001');
+      : (process.env.NEXT_PUBLIC_API_TARGET || 'http://21.91.222.45:9090');
 
     const res = await fetch(`${baseUrl}/api-docs-json`, {
       cache: 'no-store',

@@ -2,6 +2,8 @@
 export interface PageDto {
   id: string;
   title: string;
+  category: string;
+  category_name: string;
   project: string;
   iteration: string;
   version: string | null;
@@ -16,11 +18,32 @@ export interface PageDto {
   created_at: string;
   uploaded_at: string;
   url: string;
+  share_url: string;
 }
 
-export interface ProjectNode {
+export interface SidebarReportNode {
+  id: string;
+  title: string;
+  uploaded_at: string;
+}
+
+export interface SidebarProjectNode {
   project: string;
-  iterations: string[];
+  report_count: number;
+  reports: SidebarReportNode[];
+}
+
+export interface CategoryNode {
+  slug: string;
+  name: string;
+  report_count: number;
+  projects: SidebarProjectNode[];
+}
+
+export interface CategoryDto {
+  slug: string;
+  name: string;
+  report_count: number;
 }
 
 export interface ListResult {
@@ -29,6 +52,7 @@ export interface ListResult {
 }
 
 export interface ListParams {
+  category?: string;
   project?: string;
   iteration?: string;
   q?: string;
@@ -38,6 +62,7 @@ export interface ListParams {
 
 // 上传时可传入的覆盖参数（查询字符串）
 export interface UploadOverrides {
+  category?: string;
   project?: string;
   iteration?: string;
   title?: string;
@@ -110,6 +135,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 export const api = {
   list(params: ListParams = {}): Promise<ListResult> {
     const sp = new URLSearchParams();
+    if (params.category) sp.set('category', params.category);
     if (params.project) sp.set('project', params.project);
     if (params.iteration) sp.set('iteration', params.iteration);
     if (params.q) sp.set('q', params.q);
@@ -119,8 +145,79 @@ export const api = {
     return request<ListResult>(`/api/pages${qs ? `?${qs}` : ''}`);
   },
 
-  projects(): Promise<ProjectNode[]> {
-    return request<ProjectNode[]>('/api/projects');
+  categoryTree(): Promise<CategoryNode[]> {
+    return request<CategoryNode[]>('/api/projects');
+  },
+
+  categories(): Promise<CategoryDto[]> {
+    return request<CategoryDto[]>('/api/categories');
+  },
+
+  createCategory(name: string): Promise<CategoryDto> {
+    return request<CategoryDto>('/api/categories', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+  },
+
+  updateCategory(slug: string, name: string): Promise<CategoryDto> {
+    return request<CategoryDto>(`/api/categories/${encodeURIComponent(slug)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+  },
+
+  async deleteCategory(slug: string): Promise<{ ok: boolean; migrated: number }> {
+    return request<{ ok: boolean; migrated: number }>(`/api/categories/${encodeURIComponent(slug)}`, {
+      method: 'DELETE',
+    });
+  },
+
+  updateProject(category: string, project: string, newProject: string): Promise<{ ok: boolean; updated: number; project: string }> {
+    return request<{ ok: boolean; updated: number; project: string }>(
+      `/api/categories/${encodeURIComponent(category)}/projects/${encodeURIComponent(project)}`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project: newProject }),
+      },
+    );
+  },
+
+  async deleteProject(category: string, project: string): Promise<{ ok: boolean; deleted: number }> {
+    return request<{ ok: boolean; deleted: number }>(
+      `/api/categories/${encodeURIComponent(category)}/projects/${encodeURIComponent(project)}`,
+      { method: 'DELETE' },
+    );
+  },
+
+  moveProject(category: string, project: string, targetCategory: string, targetProject?: string): Promise<{ ok: boolean; moved: number; category: string; project: string }> {
+    return request<{ ok: boolean; moved: number; category: string; project: string }>(
+      `/api/categories/${encodeURIComponent(category)}/projects/${encodeURIComponent(project)}/location`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ category: targetCategory, project: targetProject }),
+      },
+    );
+  },
+
+  moveReport(id: string, category: string, project: string): Promise<PageDto> {
+    return request<PageDto>(`/api/pages/${encodeURIComponent(id)}/location`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ category, project }),
+    });
+  },
+
+  updateReportTitle(id: string, title: string): Promise<PageDto> {
+    return request<PageDto>(`/api/pages/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title }),
+    });
   },
 
   get(id: string): Promise<PageDto> {
@@ -151,6 +248,10 @@ export const api = {
       throw new Error(msg);
     }
     return res.json();
+  },
+
+  shareUrl(id: string): string {
+    return `/share/${encodeURIComponent(id)}`;
   },
 
   async remove(id: string): Promise<void> {

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# HtmlHub 自动部署脚本
+# HtmlHub 自动部署脚本 (SVN 版本)
 # 用法:
 #   ./deploy.sh              # 默认部署（拉取最新代码 -> 构建 -> 启动）
 #   ./deploy.sh --rollback   # 回滚到上一个版本
@@ -11,7 +11,7 @@
 #   ./deploy.sh --backup     # 仅执行数据备份
 #
 # 环境变量（可在 .env 中配置）:
-#   DEPLOY_BRANCH    - 部署分支，默认 main
+#   SVN_URL          - SVN 仓库地址（必须配置）
 #   DEPLOY_PORT      - 对外端口，默认 8088
 #   COMPOSE_PROJECT  - compose 项目名，默认 htmlhub
 #   BACKUP_DIR       - 备份目录，默认 ./backups
@@ -50,7 +50,7 @@ if [[ -f "$SCRIPT_DIR/.env" ]]; then
     source "$SCRIPT_DIR/.env"
 fi
 
-DEPLOY_BRANCH="${DEPLOY_BRANCH:-main}"
+SVN_URL="${SVN_URL:-}"
 DEPLOY_PORT="${DEPLOY_PORT:-8088}"
 COMPOSE_PROJECT="${COMPOSE_PROJECT:-htmlhub}"
 BACKUP_DIR="${BACKUP_DIR:-$SCRIPT_DIR/backups}"
@@ -58,37 +58,40 @@ HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-120}"
 KEEP_BACKUPS="${KEEP_BACKUPS:-5}"
 
 # Docker Compose 命令（兼容 v1 / v2）
-if docker compose version &>/dev/null; then
+if docker compose version &>/dev/null 2>&1; then
     DC="docker compose -f $COMPOSE_FILE -p $COMPOSE_PROJECT"
-else
+elif command -v docker-compose &>/dev/null; then
     DC="docker-compose -f $COMPOSE_FILE -p $COMPOSE_PROJECT"
+else
+    log_error "未找到 docker compose 或 docker-compose，请先安装"
+    exit 1
 fi
 
 # ============================================================
 # 工具函数
 # ============================================================
 
-# 获取当前 Git commit 短哈希
-get_current_commit() {
-    git -C "$PROJECT_DIR" rev-parse --short HEAD 2>/dev/null || echo "unknown"
+# 获取当前 SVN revision
+get_current_revision() {
+    svn info "$PROJECT_DIR" 2>/dev/null | grep "^Revision:" | awk '{print $2}' || echo "unknown"
 }
 
-# 获取当前 Git 分支
-get_current_branch() {
-    git -C "$PROJECT_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown"
+# 获取当前 SVN 仓库 URL
+get_current_svn_url() {
+    svn info "$PROJECT_DIR" 2>/dev/null | grep "^URL:" | awk '{print $2}' || echo "unknown"
 }
 
 # 记录部署版本
 save_deploy_info() {
-    local commit="$1"
+    local revision="$1"
     local timestamp
     timestamp="$(date '+%Y-%m-%d %H:%M:%S')"
     cat > "$SCRIPT_DIR/.last-deploy" <<EOF
-DEPLOY_COMMIT=$commit
+DEPLOY_REVISION=$revision
 DEPLOY_TIME=$timestamp
-DEPLOY_BRANCH=$DEPLOY_BRANCH
+DEPLOY_SVN_URL=$SVN_URL
 EOF
-    log_info "部署信息已保存: commit=$commit, time=$timestamp"
+    log_info "部署信息已保存: revision=$revision, time=$timestamp"
 }
 
 # 读取上次部署信息
@@ -96,7 +99,7 @@ load_last_deploy() {
     if [[ -f "$SCRIPT_DIR/.last-deploy" ]]; then
         # shellcheck disable=SC1091
         source "$SCRIPT_DIR/.last-deploy"
-        echo "$DEPLOY_COMMIT"
+        echo "$DEPLOY_REVISION"
     else
         echo ""
     fi
@@ -111,9 +114,9 @@ do_backup() {
 
     local timestamp
     timestamp="$(date '+%Y%m%d_%H%M%S')"
-    local commit
-    commit="$(get_current_commit)"
-    local backup_name="backup_${timestamp}_${commit}"
+    local revision
+    revision="$(get_current_revision)"
+    local backup_name="backup_${timestamp}_r${revision}"
     local backup_path="$BACKUP_DIR/$backup_name"
 
     mkdir -p "$backup_path"
@@ -163,9 +166,9 @@ health_check() {
     local web_ok=false
 
     while (( elapsed < HEALTH_TIMEOUT )); do
-        # 检查 API 服务
+        # 检查 API 服务（使用 /api/health 健康检查端点）
         if ! $api_ok; then
-            if curl -sf "http://localhost:${DEPLOY_PORT}/api/" &>/dev/null; then
+            if curl -sf "http://localhost:${DEPLOY_PORT}/api/health" &>/dev/null; then
                 api_ok=true
                 log_ok "API 服务就绪"
             fi
@@ -207,34 +210,47 @@ do_deploy() {
     start_time=$(date +%s)
 
     log_info "=========================================="
-    log_info "  HtmlHub 自动部署"
+    log_info "  HtmlHub 自动部署 (SVN)"
     log_info "=========================================="
     log_info "项目目录: $PROJECT_DIR"
-    log_info "部署分支: $DEPLOY_BRANCH"
+    log_info "SVN 地址: $SVN_URL"
     log_info "对外端口: $DEPLOY_PORT"
+
+    # 检查 SVN_URL 是否配置
+    if [[ -z "$SVN_URL" ]]; then
+        log_error "SVN_URL 未配置！请在 deploy/.env 中设置 SVN_URL"
+        return 1
+    fi
 
     # 1. 拉取最新代码
     log_info "[1/5] 拉取最新代码..."
     cd "$PROJECT_DIR"
 
-    # 检查是否有未提交的更改
-    if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
-        log_warn "检测到未提交的本地更改"
-        log_info "暂存本地更改 (git stash)..."
-        git stash push -m "deploy-auto-stash-$(date '+%Y%m%d_%H%M%S')"
+    if [[ -d "$PROJECT_DIR/.svn" ]]; then
+        # 已有 SVN 工作副本，检查是否有本地修改
+        local local_changes
+        local_changes=$(svn status "$PROJECT_DIR" 2>/dev/null | grep -c "^[ACDMR!~]" || true)
+        if (( local_changes > 0 )); then
+            log_warn "检测到 $local_changes 个本地修改的文件"
+            log_info "正在还原本地修改 (svn revert -R)..."
+            svn revert -R "$PROJECT_DIR"
+        fi
+
+        # 更新到最新版本
+        svn update "$PROJECT_DIR"
+    else
+        # 首次 checkout
+        log_info "首次检出代码..."
+        svn checkout "$SVN_URL" "$PROJECT_DIR" --force
     fi
 
-    git fetch origin "$DEPLOY_BRANCH"
-    git checkout "$DEPLOY_BRANCH"
-    git pull origin "$DEPLOY_BRANCH"
+    local current_revision
+    current_revision="$(get_current_revision)"
+    local last_revision
+    last_revision="$(load_last_deploy)"
 
-    local current_commit
-    current_commit="$(get_current_commit)"
-    local last_commit
-    last_commit="$(load_last_deploy)"
-
-    if [[ "$current_commit" == "$last_commit" ]]; then
-        log_warn "当前版本 ($current_commit) 与上次部署一致，无需重新部署"
+    if [[ "$current_revision" == "$last_revision" ]]; then
+        log_warn "当前版本 (r$current_revision) 与上次部署一致，无需重新部署"
         read -rp "是否强制重新部署？[y/N] " force
         if [[ "$force" != "y" && "$force" != "Y" ]]; then
             log_info "部署取消"
@@ -242,18 +258,23 @@ do_deploy() {
         fi
     fi
 
-    log_ok "代码已更新到: $current_commit"
+    log_ok "代码已更新到: r$current_revision"
 
     # 2. 备份数据
     log_info "[2/5] 备份现有数据..."
     do_backup
 
-    # 3. 构建镜像
+    # 3. 构建镜像（利用 Docker 层缓存进行增量构建，大幅提升速度）
     log_info "[3/5] 构建 Docker 镜像..."
-    $DC build --no-cache --parallel 2>&1 | while IFS= read -r line; do
+    $DC build 2>&1 | while IFS= read -r line; do
         echo "  $line"
     done
     log_ok "镜像构建完成"
+
+    # 清理本次构建产生的悬空镜像和过期构建缓存，防止磁盘堆积
+    log_info "清理构建产生的悬空镜像..."
+    docker image prune -f 2>/dev/null || true
+    docker builder prune -f --filter "until=24h" 2>/dev/null || true
 
     # 4. 启动服务
     log_info "[4/5] 启动服务..."
@@ -264,14 +285,14 @@ do_deploy() {
     # 5. 健康检查
     log_info "[5/5] 执行健康检查..."
     if health_check; then
-        save_deploy_info "$current_commit"
+        save_deploy_info "$current_revision"
         local end_time
         end_time=$(date +%s)
         local duration=$((end_time - start_time))
         echo ""
         log_ok "=========================================="
         log_ok "  部署成功！"
-        log_ok "  版本: $current_commit"
+        log_ok "  版本: r$current_revision"
         log_ok "  耗时: ${duration}s"
         log_ok "  访问: http://localhost:${DEPLOY_PORT}"
         log_ok "=========================================="
@@ -292,15 +313,15 @@ do_deploy() {
 # ============================================================
 do_rollback() {
     log_info "=========================================="
-    log_info "  HtmlHub 版本回滚"
+    log_info "  HtmlHub 版本回滚 (SVN)"
     log_info "=========================================="
 
-    local last_commit
-    last_commit="$(load_last_deploy)"
+    local last_revision
+    last_revision="$(load_last_deploy)"
 
-    if [[ -z "$last_commit" ]]; then
+    if [[ -z "$last_revision" ]]; then
         log_error "未找到上次部署记录，无法自动回滚"
-        log_info "请手动指定回滚版本: git checkout <commit> && $0"
+        log_info "请手动指定回滚版本: svn update -r <revision> && $0"
         return 1
     fi
 
@@ -314,6 +335,7 @@ do_rollback() {
     fi
 
     log_info "将回滚到备份: $(basename "$latest_backup")"
+    log_info "目标版本: r$last_revision"
     read -rp "确认回滚？此操作将停止当前服务并恢复数据 [y/N] " confirm
     if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
         log_info "回滚取消"
@@ -324,10 +346,10 @@ do_rollback() {
     log_info "停止当前服务..."
     $DC down --remove-orphans 2>/dev/null || true
 
-    # 回退代码
-    log_info "回退代码到: $last_commit"
+    # 回退代码到指定 revision
+    log_info "回退代码到: r$last_revision"
     cd "$PROJECT_DIR"
-    git checkout "$last_commit"
+    svn update -r "$last_revision" "$PROJECT_DIR"
 
     # 恢复数据卷
     local volume_name="${COMPOSE_PROJECT}_htmlreport-data"
@@ -343,11 +365,11 @@ do_rollback() {
 
     # 重新构建并启动
     log_info "重新构建并启动服务..."
-    $DC build --parallel
+    $DC build
     $DC up -d
 
     if health_check; then
-        log_ok "回滚成功！"
+        log_ok "回滚成功！当前版本: r$last_revision"
     else
         log_error "回滚后健康检查失败，请手动排查"
         return 1
@@ -378,10 +400,10 @@ do_status() {
     $DC ps
 
     echo ""
-    local last_commit
-    last_commit="$(load_last_deploy)"
-    if [[ -n "$last_commit" ]]; then
-        log_info "上次部署版本: $last_commit"
+    local last_revision
+    last_revision="$(load_last_deploy)"
+    if [[ -n "$last_revision" ]]; then
+        log_info "上次部署版本: r$last_revision"
         if [[ -f "$SCRIPT_DIR/.last-deploy" ]]; then
             # shellcheck disable=SC1091
             source "$SCRIPT_DIR/.last-deploy"
@@ -389,11 +411,12 @@ do_status() {
         fi
     fi
 
-    local current_commit
-    current_commit="$(get_current_commit)"
-    local current_branch
-    current_branch="$(get_current_branch)"
-    log_info "当前代码版本: $current_commit ($current_branch)"
+    local current_revision
+    current_revision="$(get_current_revision)"
+    local current_url
+    current_url="$(get_current_svn_url)"
+    log_info "当前代码版本: r$current_revision"
+    log_info "SVN 仓库地址: $current_url"
 
     # 显示备份信息
     local backup_count
@@ -410,8 +433,23 @@ do_logs() {
 # ============================================================
 do_cleanup() {
     log_info "清理无用的 Docker 资源..."
-    docker image prune -f --filter "label=com.docker.compose.project=$COMPOSE_PROJECT" 2>/dev/null || true
-    docker builder prune -f 2>/dev/null || true
+
+    # 清理悬空镜像（被新构建替代的旧层）
+    log_info "清理悬空镜像..."
+    docker image prune -af 2>/dev/null || true
+
+    # 清理构建缓存
+    log_info "清理构建缓存..."
+    docker builder prune -af 2>/dev/null || true
+
+    # 清理已停止的容器
+    log_info "清理已停止的容器..."
+    docker container prune -f 2>/dev/null || true
+
+    # 显示清理后的磁盘使用情况
+    log_info "当前 Docker 磁盘使用:"
+    docker system df 2>/dev/null || true
+
     log_ok "清理完成"
 }
 
@@ -420,7 +458,7 @@ do_cleanup() {
 # ============================================================
 main() {
     # 检查依赖
-    for cmd in docker git curl; do
+    for cmd in docker svn curl; do
         if ! command -v "$cmd" &>/dev/null; then
             log_error "缺少必要工具: $cmd，请先安装"
             exit 1
@@ -456,7 +494,7 @@ main() {
             ;;
         --help|-h)
             echo ""
-            echo "HtmlHub 自动部署脚本"
+            echo "HtmlHub 自动部署脚本 (SVN)"
             echo ""
             echo "用法: $0 [命令]"
             echo ""
@@ -472,7 +510,7 @@ main() {
             echo "  --help, -h              显示帮助信息"
             echo ""
             echo "环境变量（可在 deploy/.env 中配置）:"
-            echo "  DEPLOY_BRANCH    部署分支（默认: main）"
+            echo "  SVN_URL          SVN 仓库地址（必须配置）"
             echo "  DEPLOY_PORT      对外端口（默认: 8088）"
             echo "  COMPOSE_PROJECT  Compose 项目名（默认: htmlhub）"
             echo "  BACKUP_DIR       备份目录（默认: deploy/backups）"

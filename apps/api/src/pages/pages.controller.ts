@@ -22,7 +22,17 @@ import * as os from 'node:os';
 import archiver from 'archiver';
 import { PagesService } from './pages.service';
 import { config } from '../config';
-import { ListPagesQueryDto, UploadPageQueryDto, BatchDeleteBodyDto } from './pages.dto';
+import {
+  ListPagesQueryDto,
+  UploadPageQueryDto,
+  BatchDeleteBodyDto,
+  CreateCategoryBodyDto,
+  UpdateCategoryBodyDto,
+  UpdateProjectBodyDto,
+  UpdateReportBodyDto,
+  MoveReportBodyDto,
+  MoveProjectBodyDto,
+} from './pages.dto';
 import { ManifestOverrides } from './manifest-resolver';
 
 @ApiTags('pages')
@@ -42,17 +52,19 @@ export class PagesController {
 
   /**
    * 获取页面列表
+   * @param category - 按分类筛选（可选）
    * @param project - 按项目名称筛选（可选）
    * @param iteration - 按迭代版本筛选（可选）
-   * @param q - 搜索关键词，会匹配标题、摘要和标签（可选）
+   * @param q - 搜索关键词，会匹配标题、摘要、标签与分类名称（可选）
    * @param page - 页码，从 1 开始（可选，默认 1）
    * @param pageSize - 每页数量（可选，默认 20，最大 100）
    */
   @Get('pages')
-  @ApiOperation({ summary: '获取页面列表', description: '支持按项目、迭代筛选和关键词搜索，支持分页' })
+  @ApiOperation({ summary: '获取页面列表', description: '支持按分类、项目、迭代筛选和关键词搜索，支持分页' })
+  @ApiQuery({ name: 'category', required: false, description: '分类标识，用于筛选特定分类的页面' })
   @ApiQuery({ name: 'project', required: false, description: '项目名称，用于筛选特定项目的页面' })
   @ApiQuery({ name: 'iteration', required: false, description: '迭代版本，用于筛选特定迭代的页面' })
-  @ApiQuery({ name: 'q', required: false, description: '搜索关键词，匹配标题、摘要和标签' })
+  @ApiQuery({ name: 'q', required: false, description: '搜索关键词，匹配标题、摘要、标签与分类名称' })
   @ApiQuery({ name: 'page', required: false, description: '页码（从 1 开始），默认第 1 页' })
   @ApiQuery({ name: 'pageSize', required: false, description: '每页数量（1-100），默认 20 条' })
   list(
@@ -62,13 +74,100 @@ export class PagesController {
   }
 
   /**
-   * 获取项目/迭代树
-   * 返回所有项目和对应的迭代列表，用于前端侧栏导航
+   * 获取项目导航树
+   * 返回所有分类及其分类下的项目、报告列表，用于前端侧栏导航和 AI 自动化操作。
    */
   @Get('projects')
-  @ApiOperation({ summary: '获取项目/迭代树', description: '返回所有项目及其迭代列表，用于前端导航' })
+  @ApiOperation({ summary: '获取项目导航树', description: '返回分类 / 项目 / 报告三层结构，包含各层报告数量，用于导航与自动化操作' })
   projects() {
     return this.pages.projectTree();
+  }
+
+  /** 获取分类列表 */
+  @Get('categories')
+  @ApiOperation({ summary: '获取分类列表', description: '返回所有分类，包含空分类和各分类下报告数量' })
+  categories() {
+    return this.pages.listCategories();
+  }
+
+  /** 新建分类 */
+  @Post('categories')
+  @ApiOperation({ summary: '新建分类', description: '创建一个新的报告分类，用于导航与上传归档' })
+  @ApiBody({ type: CreateCategoryBodyDto })
+  createCategory(@Body() body: CreateCategoryBodyDto) {
+    return this.pages.createCategory(body.name);
+  }
+
+  /** 编辑分类名称 */
+  @Put('categories/:slug')
+  @ApiOperation({ summary: '编辑分类', description: '修改指定分类的名称，默认分类不可编辑' })
+  @ApiParam({ name: 'slug', description: '分类标识' })
+  @ApiBody({ type: UpdateCategoryBodyDto })
+  updateCategory(@Param('slug') slug: string, @Body() body: UpdateCategoryBodyDto) {
+    return this.pages.updateCategory(slug, body.name);
+  }
+
+  /** 删除分类 */
+  @Delete('categories/:slug')
+  @ApiOperation({ summary: '删除分类', description: '删除指定分类，分类下的报告将迁移到默认分类。默认分类不可删除' })
+  @ApiParam({ name: 'slug', description: '分类标识' })
+  deleteCategory(@Param('slug') slug: string) {
+    return this.pages.deleteCategory(slug);
+  }
+
+  /** 重命名项目目录 */
+  @Put('categories/:slug/projects/:project')
+  @ApiOperation({ summary: '重命名项目目录', description: '修改指定分类下的项目目录名称' })
+  @ApiParam({ name: 'slug', description: '分类标识' })
+  @ApiParam({ name: 'project', description: '当前项目标识' })
+  @ApiBody({ type: UpdateProjectBodyDto })
+  updateProject(
+    @Param('slug') slug: string,
+    @Param('project') project: string,
+    @Body() body: UpdateProjectBodyDto,
+  ) {
+    return this.pages.renameProject(slug, project, body.project);
+  }
+
+  /** 删除项目目录 */
+  @Delete('categories/:slug/projects/:project')
+  @ApiOperation({ summary: '删除项目目录', description: '将指定项目目录下的报告移入回收站' })
+  @ApiParam({ name: 'slug', description: '分类标识' })
+  @ApiParam({ name: 'project', description: '项目标识' })
+  deleteProject(@Param('slug') slug: string, @Param('project') project: string) {
+    return this.pages.deleteProject(slug, project);
+  }
+
+  /** 移动项目目录 */
+  @Put('categories/:slug/projects/:project/location')
+  @ApiOperation({ summary: '移动项目目录', description: '将项目目录移动到目标分类，可选择合并/改名到目标项目' })
+  @ApiParam({ name: 'slug', description: '源分类标识' })
+  @ApiParam({ name: 'project', description: '源项目标识' })
+  @ApiBody({ type: MoveProjectBodyDto })
+  moveProject(
+    @Param('slug') slug: string,
+    @Param('project') project: string,
+    @Body() body: MoveProjectBodyDto,
+  ) {
+    return this.pages.moveProject(slug, project, body.category, body.project || project);
+  }
+
+  /** 移动单个报告 */
+  @Put('pages/:id/location')
+  @ApiOperation({ summary: '移动报告', description: '将单个报告移动到目标分类/项目目录' })
+  @ApiParam({ name: 'id', description: '页面唯一标识符' })
+  @ApiBody({ type: MoveReportBodyDto })
+  moveReport(@Param('id') id: string, @Body() body: MoveReportBodyDto) {
+    return this.pages.moveReport(id, body.category, body.project);
+  }
+
+  /** 重命名报告标题 */
+  @Put('pages/:id')
+  @ApiOperation({ summary: '重命名报告', description: '修改指定报告的显示标题' })
+  @ApiParam({ name: 'id', description: '页面唯一标识符' })
+  @ApiBody({ type: UpdateReportBodyDto })
+  updateReport(@Param('id') id: string, @Body() body: UpdateReportBodyDto) {
+    return this.pages.updateReportTitle(id, body.title);
   }
 
   /**
@@ -85,7 +184,7 @@ export class PagesController {
   /**
    * 上传页面：同时支持 .zip 与 .html
    * 通过 query 参数可覆盖/补充 manifest 字段（尤其适合宽松模式）：
-   *   project, iteration, title, author, version, tags(逗号分隔), summary, id
+   *   category, project, iteration, title, author, version, tags(逗号分隔), summary, id
    */
   @Post('pages/upload')
   @ApiOperation({
@@ -101,6 +200,7 @@ export class PagesController {
       },
     },
   })
+  @ApiQuery({ name: 'category', required: false, description: '分类标识（覆盖/补充 manifest）' })
   @ApiQuery({ name: 'project', required: false, description: '项目名称（覆盖/补充 manifest）' })
   @ApiQuery({ name: 'iteration', required: false, description: '迭代版本（覆盖/补充 manifest）' })
   @ApiQuery({ name: 'title', required: false, description: '页面标题（覆盖/补充 manifest）' })
@@ -151,6 +251,7 @@ export class PagesController {
     const overrides: ManifestOverrides = {
       id: query.id,
       title: query.title,
+      category: query.category,
       project: query.project,
       iteration: query.iteration,
       author: query.author,

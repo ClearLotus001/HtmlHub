@@ -1,8 +1,9 @@
 'use client';
 
-import { Clock, Folder, Search } from 'lucide-react';
+import { Clock, Folder, Folders, Search } from 'lucide-react';
 
 interface ActiveReportFiltersProps {
+  selectedCategoryLabel: string | null;
   selectedProject: string | null;
   selectedIteration: string | null;
   query: string;
@@ -10,17 +11,24 @@ interface ActiveReportFiltersProps {
 }
 
 export function ActiveReportFilters({
+  selectedCategoryLabel,
   selectedProject,
   selectedIteration,
   query,
   onClear,
 }: ActiveReportFiltersProps) {
-  if (!selectedProject && !selectedIteration && !query) return null;
+  if (!selectedCategoryLabel && !selectedProject && !selectedIteration && !query) return null;
 
   const chipClass = 'inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary/10 px-3 py-1.5 text-[12px] font-medium text-primary shadow-sm backdrop-blur-sm';
 
   return (
     <div className="animate-macos-slide-down mb-6 flex flex-wrap items-center gap-2">
+      {selectedCategoryLabel && (
+        <span className={chipClass}>
+          <Folders className="h-3 w-3" />
+          {selectedCategoryLabel}
+        </span>
+      )}
       {selectedProject && (
         <span className={chipClass}>
           <Folder className="h-3 w-3" />

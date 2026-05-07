@@ -10,11 +10,20 @@ export const DB_TOKEN = 'SQLITE_DB';
 // 导出 Database 类型，方便其他模块引用
 export type AppDatabase = Database.Database;
 
-// 建表 SQL（幂等）
-const SCHEMA_SQL = `
+// 基础建表 SQL（幂等）—— 不包含依赖 category 列的语句，
+// 因为旧数据库中 reports 表可能尚未拥有 category 列，
+// CREATE TABLE IF NOT EXISTS 在表已存在时不会更新结构。
+const BASE_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS categories (
+  slug          TEXT PRIMARY KEY,
+  name          TEXT NOT NULL UNIQUE,
+  created_at    TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS reports (
   id            TEXT PRIMARY KEY,
   title         TEXT NOT NULL,
+  category      TEXT NOT NULL DEFAULT 'default',
   project       TEXT NOT NULL,
   iteration     TEXT NOT NULL,
   version       TEXT,
@@ -33,10 +42,12 @@ CREATE TABLE IF NOT EXISTS reports (
   purged_at     TEXT                 -- 物理清理时间
 );
 
+-- 不依赖 category 列的索引可以安全创建
 CREATE INDEX IF NOT EXISTS idx_reports_project   ON reports(project);
 CREATE INDEX IF NOT EXISTS idx_reports_iteration ON reports(iteration);
 CREATE INDEX IF NOT EXISTS idx_reports_deleted   ON reports(deleted_at);
 CREATE INDEX IF NOT EXISTS idx_reports_uploaded  ON reports(uploaded_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_categories_name ON categories(name);
 
 -- 清理日志：审计与回滚依据
 CREATE TABLE IF NOT EXISTS cleanup_logs (
@@ -54,11 +65,23 @@ CREATE INDEX IF NOT EXISTS idx_cleanup_run  ON cleanup_logs(run_id);
 CREATE INDEX IF NOT EXISTS idx_cleanup_time ON cleanup_logs(created_at DESC);
 `;
 
-// 版本化迁移：旧版 reports 表升级（新增 source/trashed_path/purged_at 列）
+// 迁移完成后执行的 SQL —— 此时 category 列已确保存在
+const POST_MIGRATION_SQL = `
+CREATE INDEX IF NOT EXISTS idx_reports_category ON reports(category);
+
+INSERT OR IGNORE INTO categories (slug, name, created_at)
+VALUES ('default', '默认分类', CURRENT_TIMESTAMP);
+`;
+
+// 版本化迁移：旧版 reports 表升级（新增 source/category/trashed_path/purged_at 列）
 const MIGRATIONS: Array<{ check: string; apply: string[] }> = [
   {
     check: "SELECT 1 FROM pragma_table_info('reports') WHERE name='source'",
     apply: ["ALTER TABLE reports ADD COLUMN source TEXT NOT NULL DEFAULT 'standard'"],
+  },
+  {
+    check: "SELECT 1 FROM pragma_table_info('reports') WHERE name='category'",
+    apply: ["ALTER TABLE reports ADD COLUMN category TEXT NOT NULL DEFAULT 'default'"],
   },
   {
     check: "SELECT 1 FROM pragma_table_info('reports') WHERE name='trashed_path'",
@@ -93,10 +116,10 @@ let dbInstance: Database.Database | null = null;
         db.pragma('journal_mode = WAL');
         db.pragma('foreign_keys = ON');
 
-        // 初始化表结构
-        db.exec(SCHEMA_SQL);
+        // 阶段 1: 基础表结构（不含依赖 category 列的语句）
+        db.exec(BASE_SCHEMA_SQL);
 
-        // 执行增量迁移（幂等）
+        // 阶段 2: 执行增量迁移（幂等），确保 category 等新列存在
         for (const m of MIGRATIONS) {
           const exists = db.prepare(m.check).get();
           if (!exists) {
@@ -104,6 +127,9 @@ let dbInstance: Database.Database | null = null;
             logger.log(`迁移完成: ${m.apply.join('; ')}`);
           }
         }
+
+        // 阶段 3: 依赖 category 列的索引 + 默认分类种子数据
+        db.exec(POST_MIGRATION_SQL);
 
         dbInstance = db;
         logger.log(`SQLite 就绪: ${config.dbPath}`);

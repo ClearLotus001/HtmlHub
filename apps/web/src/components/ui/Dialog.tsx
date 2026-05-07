@@ -44,13 +44,20 @@ export function Dialog({
   const titleId = React.useId();
   const descriptionId = React.useId();
 
+  // 使用 ref 持有最新的 onClose，避免 handleClose 因 onClose 引用变化而导致
+  // useEffect 重新执行（那会抢走输入框焦点）。
+  const onCloseRef = React.useRef(onClose);
+  React.useEffect(() => {
+    onCloseRef.current = onClose;
+  });
+
   const handleClose = React.useCallback(() => {
     setLeaving(true);
     window.setTimeout(() => {
       setLeaving(false);
-      onClose();
+      onCloseRef.current();
     }, 160);
-  }, [onClose]);
+  }, []);
 
   React.useEffect(() => {
     if (!open) return;

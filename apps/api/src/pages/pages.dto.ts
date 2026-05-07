@@ -12,10 +12,15 @@ import {
 } from 'class-validator';
 
 const ID_RE = /^[a-zA-Z0-9_-]{3,64}$/;
+const CATEGORY_RE = /^[a-z0-9-]{1,40}$/;
 const PROJECT_RE = /^[a-z0-9-]{1,40}$/;
 const ITERATION_RE = /^[A-Za-z0-9._-]{1,40}$/;
 
 export class ListPagesQueryDto {
+  @IsOptional()
+  @Matches(CATEGORY_RE, { message: 'category 仅支持小写字母、数字和短横线，长度 1-40' })
+  category?: string;
+
   @IsOptional()
   @Matches(PROJECT_RE, { message: 'project 仅支持小写字母、数字和短横线，长度 1-40' })
   project?: string;
@@ -47,6 +52,10 @@ export class UploadPageQueryDto {
   @IsOptional()
   @Matches(ID_RE, { message: 'id 需为 3-64 位字母、数字、下划线或短横线' })
   id?: string;
+
+  @IsOptional()
+  @Matches(CATEGORY_RE, { message: 'category 仅支持小写字母、数字和短横线，长度 1-40' })
+  category?: string;
 
   @IsOptional()
   @Matches(PROJECT_RE, { message: 'project 仅支持小写字母、数字和短横线，长度 1-40' })
@@ -90,6 +99,59 @@ export class UploadPageQueryDto {
   @IsString({ each: true })
   @MaxLength(40, { each: true })
   tags?: string[];
+}
+
+export class CreateCategoryBodyDto {
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : value))
+  @IsString()
+  @Length(1, 40)
+  name!: string;
+}
+
+export class UpdateCategoryBodyDto {
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : value))
+  @IsString()
+  @Length(1, 40)
+  name!: string;
+}
+
+export class UpdateProjectBodyDto {
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim().toLowerCase() : value))
+  @IsString()
+  @Matches(PROJECT_RE, { message: 'project 仅支持小写字母、数字和短横线，长度 1-40' })
+  project!: string;
+}
+
+export class UpdateReportBodyDto {
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : value))
+  @IsString()
+  @Length(1, 200)
+  title!: string;
+}
+
+export class MoveReportBodyDto {
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @IsString()
+  @Matches(CATEGORY_RE, { message: 'category 仅支持小写字母、数字和短横线，长度 1-40' })
+  category!: string;
+
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim().toLowerCase() : value))
+  @IsString()
+  @Matches(PROJECT_RE, { message: 'project 仅支持小写字母、数字和短横线，长度 1-40' })
+  project!: string;
+}
+
+export class MoveProjectBodyDto {
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @IsString()
+  @Matches(CATEGORY_RE, { message: 'category 仅支持小写字母、数字和短横线，长度 1-40' })
+  category!: string;
+
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim().toLowerCase() : value))
+  @IsOptional()
+  @IsString()
+  @Matches(PROJECT_RE, { message: 'project 仅支持小写字母、数字和短横线，长度 1-40' })
+  project?: string;
 }
 
 /** 批量删除请求体 */

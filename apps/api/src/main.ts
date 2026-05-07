@@ -25,6 +25,7 @@ async function bootstrap() {
     .setTitle('HtmlHub API 文档')
     .setDescription('HTML 静态页面管理系统 API 接口文档')
     .setVersion('1.0')
+    .addServer(process.env.API_PUBLIC_URL || 'http://21.91.222.45:9090', '生产服务器')
     .addTag('pages', '页面管理相关接口')
     .addTag('cleanup', '清理管理相关接口')
     .build();

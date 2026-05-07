@@ -3,6 +3,7 @@ export interface PageManifest {
   schema_version: string;
   id: string;
   title: string;
+  category?: string;
   project: string;
   iteration: string;
   version?: string;
@@ -21,6 +22,8 @@ export type PageSource = 'standard' | 'auto_manifest' | 'single_html';
 export interface PageRow {
   id: string;
   title: string;
+  category: string;
+  category_name?: string | null;
   project: string;
   iteration: string;
   version: string | null;
@@ -43,6 +46,8 @@ export interface PageRow {
 export interface PageDto {
   id: string;
   title: string;
+  category: string;
+  category_name: string;
   project: string;
   iteration: string;
   version: string | null;
@@ -57,6 +62,7 @@ export interface PageDto {
   created_at: string;
   uploaded_at: string;
   url: string; // 页面入口访问地址
+  share_url: string; // 只读分享页地址
 }
 
 // 回收站页面 DTO（比 PageDto 多 deleted_at 和 can_restore 字段）
@@ -67,10 +73,12 @@ export interface TrashPageDto extends PageDto {
 
 // 行 -> DTO
 export function rowToDto(row: PageRow): PageDto {
-  const url = `/reports/${row.project}/${row.iteration}/${row.id}/${row.entry}`;
+  const url = `/reports/${row.category}/${row.project}/${row.id}/${row.entry}`;
   return {
     id: row.id,
     title: row.title,
+    category: row.category,
+    category_name: row.category_name || '默认分类',
     project: row.project,
     iteration: row.iteration,
     version: row.version,
@@ -85,6 +93,7 @@ export function rowToDto(row: PageRow): PageDto {
     created_at: row.created_at,
     uploaded_at: row.uploaded_at,
     url,
+    share_url: `/share/${row.id}`,
   };
 }
 
@@ -100,6 +109,7 @@ export function rowToTrashDto(row: PageRow): TrashPageDto {
 
 // Manifest 字段正则
 const ID_RE = /^[a-zA-Z0-9_-]{3,64}$/;
+const CATEGORY_RE = /^[a-z0-9-]{1,40}$/;
 const PROJECT_RE = /^[a-z0-9-]{1,40}$/;
 const ITERATION_RE = /^[A-Za-z0-9._-]{1,40}$/;
 
@@ -119,6 +129,9 @@ export function validateManifest(raw: any): PageManifest {
   }
   if (!m.title || typeof m.title !== 'string' || m.title.length > 200) {
     throw new Error('title 必须为 1-200 字符的字符串');
+  }
+  if (m.category && !CATEGORY_RE.test(m.category)) {
+    throw new Error(`category 不合法：需匹配 ${CATEGORY_RE}`);
   }
   if (!m.project || !PROJECT_RE.test(m.project)) {
     throw new Error(`project 不合法：需匹配 ${PROJECT_RE}`);
@@ -140,6 +153,7 @@ export function validateManifest(raw: any): PageManifest {
     schema_version: m.schema_version,
     id: m.id,
     title: m.title,
+    category: sanitizeCategorySlug(m.category, 'default'),
     project: m.project,
     iteration: m.iteration,
     version: m.version,
@@ -153,9 +167,18 @@ export function validateManifest(raw: any): PageManifest {
 }
 
 // 用于自动生成时的宽松校验（仅做正则修正而非抛错）
+export function sanitizeCategorySlug(raw: string | undefined, fallback: string): string {
+  if (!raw) return fallback;
+  const cleaned = raw
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40);
+  return cleaned || fallback;
+}
+
 export function sanitizeProject(raw: string | undefined, fallback: string): string {
   if (!raw) return fallback;
-  // 转小写、把非法字符替换为短横线，截断长度
   const cleaned = raw
     .toLowerCase()
     .replace(/[^a-z0-9-]+/g, '-')
