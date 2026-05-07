@@ -53,7 +53,6 @@ export default function ReportSharePage({ params }: Props) {
         src={report.url}
         title={report.title}
         className="h-full w-full border-0"
-        sandbox="allow-scripts allow-same-origin"
         referrerPolicy="no-referrer"
       />
     </div>
